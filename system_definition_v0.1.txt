@@ -1,0 +1,1378 @@
+UREX Ground System - System Definition v0.1
+============================================================
+
+Document Status
+---------------
+Version: 0.1
+Purpose: Initial shared system/interface definition before detailed simulator,
+         Raspberry Pi software, packet-processing, and MCS GUI implementation.
+Status: Draft / Team Review Required
+
+This document intentionally uses "TBD" for values that must be confirmed with
+the hardware, radio, CAN, Raspberry Pi, SDR, or supervisor/team members.
+Do not replace TBD values by assumption unless the team explicitly agrees.
+
+
+1. SYSTEM OVERVIEW
+==================
+
+The UREX Ground System is expected to consist of multiple hardware and software
+components that exchange telemetry, commands, events, and status information.
+
+High-level software/hardware chain:
+
+    Satellite / Radio / CAN / SDR / Other Hardware
+                        |
+                        v
+                 Raspberry Pi
+                        |
+                        | Ethernet
+                        | ZeroMQ / MQTT
+                        v
+                Mission Control System
+                      (MCS)
+
+Main software responsibilities:
+
+Raspberry Pi side:
+- Interface with hardware devices.
+- Receive telemetry/data from connected hardware.
+- Convert hardware data into agreed software message/packet formats.
+- Perform local validation where required.
+- Forward telemetry/events to the MCS.
+- Receive commands from the MCS.
+- Validate and dispatch commands to the correct hardware interface.
+- Produce ACK/NACK/status responses.
+- Maintain local health/status information.
+- Support logging and fault reporting.
+
+MCS side:
+- Connect to Raspberry Pi/software endpoints.
+- Receive telemetry, events, acknowledgements, and error messages.
+- Validate packet/message structure and CRC where applicable.
+- Convert received data into internal telemetry models.
+- Display telemetry and system status in the PySide6 GUI.
+- Provide packet monitoring and event/error logging.
+- Allow operators to issue commands.
+- Track command status and responses.
+- Support ZeroMQ first, with MQTT replaceable through the same communication
+  abstraction.
+- Support simulator operation without real hardware.
+
+Simulator side:
+- Emulate hardware/Raspberry Pi input and output behaviour.
+- Produce realistic time-varying telemetry.
+- Support deliberate fault/error injection.
+- Follow the same interface/packet definitions used by real hardware/software.
+
+
+2. SYSTEM ARCHITECTURE
+======================
+
+Target logical architecture:
+
+    +-----------------------------+
+    | Hardware / Radio / CAN / SDR|
+    +-----------------------------+
+                  |
+                  v
+    +-----------------------------+
+    | Raspberry Pi Software       |
+    | - Hardware I/O              |
+    | - Telemetry Collection      |
+    | - Packet/Message Creation   |
+    | - Command Handler           |
+    | - Local Status              |
+    +-----------------------------+
+                  |
+                  | Ethernet
+                  v
+    +-----------------------------+
+    | Communication Layer         |
+    | - ZeroMQ                    |
+    | - MQTT (replaceable)        |
+    +-----------------------------+
+                  |
+                  v
+    +-----------------------------+
+    | MCS Receiver / Processor    |
+    | - Validation                |
+    | - CRC                       |
+    | - Parser                    |
+    | - Telemetry Model           |
+    +-----------------------------+
+                  |
+                  v
+    +-----------------------------+
+    | PySide6 MCS GUI             |
+    | - System Status             |
+    | - Telemetry                 |
+    | - Packet Monitor            |
+    | - Command Panel             |
+    | - Event/Error Log           |
+    +-----------------------------+
+
+Reverse command path:
+
+    PySide6 GUI
+        |
+        v
+    Command Model
+        |
+        v
+    Communication Layer
+        |
+        v
+    Raspberry Pi Command Handler
+        |
+        v
+    Hardware / Radio / CAN / SDR
+
+
+3. DATA FLOW TYPES
+==================
+
+The system shall distinguish at least the following message/data classes:
+
+1. TELEMETRY
+   Periodic or event-driven engineering/system measurements.
+
+2. EVENT
+   Informational state changes, transitions, or notable occurrences.
+
+3. WARNING
+   Non-critical abnormal condition.
+
+4. ERROR
+   Failed operation, invalid packet, communication failure, hardware fault,
+   or other error condition.
+
+5. COMMAND
+   Operator-generated request sent from MCS toward Raspberry Pi/hardware.
+
+6. ACK
+   Positive acknowledgement that a command was accepted/processed.
+
+7. NACK
+   Negative acknowledgement indicating rejection or failure.
+
+8. HEARTBEAT
+   Periodic indication that a software/hardware endpoint is alive.
+
+9. RAW / DEBUG DATA
+   Optional raw frames or diagnostic information for engineering use.
+
+
+4. HARDWARE INTERFACES
+======================
+
+The exact hardware interfaces must be confirmed with the relevant subsystem
+owners.
+
+Potential/known interface categories:
+
+4.1 Raspberry Pi <-> Radio
+- Physical interface: TBD
+- Protocol: TBD
+- Data rate: TBD
+- Direction: Bidirectional
+- Responsible owner: TBD
+
+4.2 Raspberry Pi <-> CAN Interface
+- Physical interface: USB / SPI / other: TBD
+- CAN type: Classical CAN / CAN FD: TBD
+- Bitrate: TBD
+- CAN IDs: TBD
+- Direction: Bidirectional
+- Responsible owner: TBD
+
+4.3 Raspberry Pi <-> SDR
+- Interface: USB / Ethernet / other: TBD
+- Software/API: TBD
+- Sample/data format: TBD
+- Direction: TBD
+- Responsible owner: TBD
+
+4.4 Raspberry Pi <-> Other Hardware
+- Device: TBD
+- Interface: TBD
+- Protocol: TBD
+- Direction: TBD
+
+
+5. COMMUNICATION INTERFACES
+===========================
+
+5.1 Raspberry Pi <-> MCS
+
+Primary transport candidate:
+- ZeroMQ
+
+Secondary/alternative transport:
+- MQTT
+
+Design requirement:
+- MCS GUI must not directly depend on ZeroMQ or MQTT.
+- Communication shall be accessed through a transport abstraction.
+- Switching transport implementations should not require rewriting the GUI
+  or telemetry processing logic.
+
+Communication details to define:
+
+- Raspberry Pi IP address: TBD
+- MCS IP address: TBD
+- ZeroMQ socket type(s): TBD
+- ZeroMQ port(s): TBD
+- ZeroMQ topics/channels: TBD
+- MQTT broker location: TBD
+- MQTT broker port: TBD
+- MQTT topic hierarchy: TBD
+- QoS: TBD
+- Authentication: TBD
+- Encryption/TLS: TBD
+- Reconnect behaviour: TBD
+- Heartbeat interval: TBD
+- Communication timeout: TBD
+
+
+6. MESSAGE / PACKET STRUCTURE
+=============================
+
+The final binary or serialized message format is TBD.
+
+The following logical fields should be considered for every message where
+appropriate:
+
+Header:
+- protocol_version
+- message_type
+- source_id
+- destination_id
+- packet_id
+- sequence_number
+- timestamp
+- payload_length
+
+Payload:
+- Message-specific telemetry, command, event, or status fields.
+
+Trailer:
+- CRC/checksum
+- Optional end marker if required
+
+Proposed logical structure:
+
+    [HEADER] [PAYLOAD] [CRC]
+
+Required definitions:
+
+protocol_version
+- Type: TBD
+- Description: Identifies protocol revision.
+
+message_type
+- Type: TBD
+- Values:
+  TELEMETRY
+  EVENT
+  WARNING
+  ERROR
+  COMMAND
+  ACK
+  NACK
+  HEARTBEAT
+  RAW
+
+source_id
+- Type: TBD
+- Values: TBD
+
+destination_id
+- Type: TBD
+- Values: TBD
+
+packet_id
+- Type: TBD
+- Description: Identifies packet/message definition.
+
+sequence_number
+- Type: uint16 or uint32 - TBD
+- Behaviour: Increment per source/message stream - TBD
+- Wrap behaviour: TBD
+
+timestamp
+- Type/format: Unix seconds / Unix milliseconds / other - TBD
+- Time source: Raspberry Pi / MCS / spacecraft / GPS / RTC - TBD
+
+payload_length
+- Type: TBD
+- Unit: bytes
+
+crc
+- Algorithm: TBD
+- Width: TBD
+- Polynomial: TBD
+- Initial value: TBD
+- Endianness: TBD
+- Coverage: header + payload / payload only - TBD
+
+
+7. TELEMETRY PARAMETER DEFINITIONS
+==================================
+
+Every final telemetry parameter should define:
+
+- Parameter Name
+- Human-readable Name
+- Source Subsystem
+- Source Device
+- Destination
+- Data Type
+- Unit
+- Nominal Range
+- Warning Range
+- Critical Range
+- Update Rate
+- Resolution
+- Description
+- Packet/Message ID
+- Required/Optional
+- Notes
+
+
+7.1 PACKET / PROTOCOL TELEMETRY
+-------------------------------
+
+Parameter: protocol_version
+Source: Communication protocol
+Type: TBD
+Unit: none
+Nominal Range: TBD
+Update Rate: Every packet
+Description: Protocol revision used by the message.
+Packet ID: All applicable messages
+
+Parameter: packet_id
+Source: Message creator
+Type: TBD
+Unit: none
+Nominal Range: TBD
+Update Rate: Every packet
+Description: Identifies packet/message definition.
+
+Parameter: sequence_number
+Source: Message creator
+Type: uint16 or uint32 - TBD
+Unit: count
+Nominal Range: Type-dependent
+Update Rate: Every packet
+Description: Monotonically increasing packet sequence counter.
+
+Parameter: source_id
+Source: Message creator
+Type: TBD
+Unit: none
+Nominal Range: TBD
+Description: Identifies originating component/subsystem.
+
+Parameter: destination_id
+Source: Message creator
+Type: TBD
+Unit: none
+Nominal Range: TBD
+Description: Identifies intended destination.
+
+Parameter: timestamp
+Source: TBD
+Type: TBD
+Unit: TBD
+Nominal Range: valid system time
+Description: Packet creation or acquisition timestamp.
+
+Parameter: payload_length
+Source: Message creator
+Type: TBD
+Unit: bytes
+Nominal Range: TBD
+Description: Payload size.
+
+Parameter: crc_value
+Source: Message creator
+Type: TBD
+Unit: none
+Nominal Range: TBD
+Description: CRC/checksum transmitted with packet.
+
+Parameter: crc_status
+Source: Receiving software
+Type: enum/bool
+Unit: none
+Values: OK / FAIL / NOT_CHECKED
+Description: Result of CRC validation.
+
+Parameter: packet_parse_status
+Source: Receiving software
+Type: enum
+Values: OK / INVALID_HEADER / INVALID_LENGTH / INVALID_FIELD / UNSUPPORTED
+Description: Result of packet parsing.
+
+Parameter: packet_receive_count
+Source: Receiver
+Type: uint32/uint64 - TBD
+Unit: packets
+Description: Total received packets.
+
+Parameter: packet_drop_count
+Source: Receiver
+Type: uint32/uint64 - TBD
+Unit: packets
+Description: Total known dropped packets.
+
+Parameter: packet_crc_error_count
+Source: Receiver
+Type: uint32/uint64 - TBD
+Unit: packets
+Description: Total packets rejected due to CRC failure.
+
+Parameter: packet_parse_error_count
+Source: Receiver
+Type: uint32/uint64 - TBD
+Unit: packets
+Description: Total packet parsing failures.
+
+
+7.2 RASPBERRY PI SYSTEM TELEMETRY
+---------------------------------
+
+Parameter: rpi_uptime_s
+Source: Raspberry Pi OS
+Type: uint32/uint64
+Unit: s
+Nominal Range: >= 0
+Description: Raspberry Pi uptime.
+
+Parameter: rpi_cpu_temperature_c
+Source: Raspberry Pi
+Type: float32 or scaled integer - TBD
+Unit: degC
+Nominal Range: TBD
+Warning Range: TBD
+Critical Range: TBD
+Update Rate: TBD
+
+Parameter: rpi_cpu_usage_percent
+Source: Raspberry Pi OS
+Type: float32 or uint8 - TBD
+Unit: %
+Nominal Range: 0-100
+Warning Range: TBD
+Critical Range: TBD
+
+Parameter: rpi_memory_usage_percent
+Source: Raspberry Pi OS
+Type: float32 or uint8 - TBD
+Unit: %
+Nominal Range: 0-100
+Warning Range: TBD
+Critical Range: TBD
+
+Parameter: rpi_memory_used_bytes
+Source: Raspberry Pi OS
+Type: uint64
+Unit: bytes
+Nominal Range: TBD
+
+Parameter: rpi_disk_usage_percent
+Source: Raspberry Pi OS
+Type: float32 or uint8 - TBD
+Unit: %
+Nominal Range: 0-100
+Warning Range: TBD
+Critical Range: TBD
+
+Parameter: rpi_network_status
+Source: Raspberry Pi network interface
+Type: enum
+Values: UP / DOWN / DEGRADED / UNKNOWN
+
+Parameter: rpi_network_rx_bytes
+Source: Raspberry Pi network interface
+Type: uint64
+Unit: bytes
+
+Parameter: rpi_network_tx_bytes
+Source: Raspberry Pi network interface
+Type: uint64
+Unit: bytes
+
+Parameter: rpi_process_status
+Source: Raspberry Pi application
+Type: enum
+Values: STARTING / RUNNING / DEGRADED / ERROR / STOPPED
+
+Parameter: rpi_software_version
+Source: Raspberry Pi application
+Type: string
+Unit: none
+
+Parameter: rpi_restart_count
+Source: Raspberry Pi application
+Type: uint32
+Unit: count
+
+Parameter: rpi_error_count
+Source: Raspberry Pi application
+Type: uint32/uint64
+Unit: count
+
+Parameter: rpi_last_error_code
+Source: Raspberry Pi application
+Type: TBD
+Unit: none
+
+
+7.3 ETHERNET / MCS LINK TELEMETRY
+---------------------------------
+
+Parameter: mcs_link_status
+Source: Communication layer
+Type: enum
+Values: CONNECTED / DISCONNECTED / DEGRADED / RECONNECTING
+
+Parameter: mcs_last_rx_timestamp
+Source: Communication layer
+Type: timestamp
+Unit: TBD
+
+Parameter: mcs_last_tx_timestamp
+Source: Communication layer
+Type: timestamp
+Unit: TBD
+
+Parameter: mcs_rx_message_count
+Source: Communication layer
+Type: uint64
+Unit: messages
+
+Parameter: mcs_tx_message_count
+Source: Communication layer
+Type: uint64
+Unit: messages
+
+Parameter: mcs_rx_error_count
+Source: Communication layer
+Type: uint64
+Unit: errors
+
+Parameter: mcs_tx_error_count
+Source: Communication layer
+Type: uint64
+Unit: errors
+
+Parameter: mcs_reconnect_count
+Source: Communication layer
+Type: uint32
+Unit: count
+
+Parameter: mcs_round_trip_latency_ms
+Source: Communication layer
+Type: float32
+Unit: ms
+Nominal Range: TBD
+Warning Range: TBD
+Critical Range: TBD
+
+Parameter: heartbeat_status
+Source: Communication layer
+Type: enum
+Values: OK / MISSED / LOST
+
+Parameter: heartbeat_age_ms
+Source: Communication layer
+Type: uint32
+Unit: ms
+
+
+7.4 RADIO / RF LINK TELEMETRY
+-----------------------------
+
+All values in this section require confirmation from the radio subsystem owner.
+
+Parameter: radio_state
+Source: Radio
+Type: enum
+Values: OFF / IDLE / RX / TX / ERROR / TBD
+
+Parameter: radio_frequency_hz
+Source: Radio
+Type: uint32/uint64
+Unit: Hz
+Nominal Range: TBD
+
+Parameter: radio_rssi_dbm
+Source: Radio
+Type: int16 or float32 - TBD
+Unit: dBm
+Nominal Range: TBD
+Warning Range: TBD
+Critical Range: TBD
+Update Rate: TBD
+
+Parameter: radio_snr_db
+Source: Radio/decoder
+Type: float32 or scaled integer - TBD
+Unit: dB
+Nominal Range: TBD
+Warning Range: TBD
+
+Parameter: radio_tx_power_dbm
+Source: Radio
+Type: float32 or scaled integer - TBD
+Unit: dBm
+Nominal Range: TBD
+
+Parameter: radio_bitrate_bps
+Source: Radio
+Type: uint32
+Unit: bit/s
+Nominal Range: TBD
+
+Parameter: radio_channel_id
+Source: Radio
+Type: TBD
+Unit: none
+
+Parameter: radio_modulation
+Source: Radio
+Type: enum/string
+Values: TBD
+
+Parameter: radio_rx_packet_count
+Source: Radio/Raspberry Pi
+Type: uint64
+Unit: packets
+
+Parameter: radio_tx_packet_count
+Source: Radio/Raspberry Pi
+Type: uint64
+Unit: packets
+
+Parameter: radio_rx_error_count
+Source: Radio/Raspberry Pi
+Type: uint64
+Unit: errors
+
+Parameter: radio_packet_loss_count
+Source: Radio/Raspberry Pi
+Type: uint64
+Unit: packets
+
+Parameter: radio_pa_temperature_c
+Source: Radio power amplifier - if available
+Type: TBD
+Unit: degC
+Nominal Range: TBD
+Warning Range: TBD
+Critical Range: TBD
+
+Parameter: radio_lock_status
+Source: Radio
+Type: enum/bool
+Values: LOCKED / UNLOCKED / UNKNOWN
+Description: Frequency/receiver lock state if supported.
+
+Parameter: radio_last_rx_timestamp
+Source: Raspberry Pi
+Type: timestamp
+Unit: TBD
+
+
+7.5 SDR TELEMETRY
+-----------------
+
+All values are TBD until SDR architecture is finalized.
+
+Parameter: sdr_status
+Source: SDR/software
+Type: enum
+Values: OFFLINE / IDLE / RECEIVING / TRANSMITTING / ERROR
+
+Parameter: sdr_center_frequency_hz
+Source: SDR
+Type: uint64
+Unit: Hz
+Nominal Range: TBD
+
+Parameter: sdr_sample_rate_sps
+Source: SDR
+Type: uint32/uint64
+Unit: samples/s
+Nominal Range: TBD
+
+Parameter: sdr_bandwidth_hz
+Source: SDR
+Type: uint32/uint64
+Unit: Hz
+Nominal Range: TBD
+
+Parameter: sdr_gain_db
+Source: SDR
+Type: float32
+Unit: dB
+Nominal Range: TBD
+
+Parameter: sdr_rx_sample_count
+Source: SDR software
+Type: uint64
+Unit: samples
+
+Parameter: sdr_overrun_count
+Source: SDR software
+Type: uint32/uint64
+Unit: count
+
+Parameter: sdr_underrun_count
+Source: SDR software
+Type: uint32/uint64
+Unit: count
+
+Parameter: sdr_error_count
+Source: SDR software
+Type: uint32/uint64
+Unit: count
+
+
+7.6 CAN TELEMETRY
+-----------------
+
+Parameter: can_status
+Source: CAN interface/software
+Type: enum
+Values: UP / DOWN / ERROR / BUS_OFF / UNKNOWN
+
+Parameter: can_bitrate_bps
+Source: CAN interface
+Type: uint32
+Unit: bit/s
+Nominal Range: TBD
+
+Parameter: can_rx_frame_count
+Source: CAN interface/software
+Type: uint64
+Unit: frames
+
+Parameter: can_tx_frame_count
+Source: CAN interface/software
+Type: uint64
+Unit: frames
+
+Parameter: can_error_count
+Source: CAN interface/software
+Type: uint64
+Unit: errors
+
+Parameter: can_bus_off_count
+Source: CAN interface/software
+Type: uint32
+Unit: count
+
+Parameter: can_last_rx_id
+Source: CAN interface/software
+Type: uint32
+Unit: none
+
+Parameter: can_last_tx_id
+Source: CAN interface/software
+Type: uint32
+Unit: none
+
+Parameter: can_last_rx_timestamp
+Source: CAN interface/software
+Type: timestamp
+
+Parameter: can_last_error_code
+Source: CAN interface/software
+Type: TBD
+
+
+7.7 SPACECRAFT / SATELLITE TELEMETRY
+------------------------------------
+
+IMPORTANT:
+The exact spacecraft telemetry set must come from the spacecraft/subsystem
+definitions. The fields below are categories/placeholders only and must not be
+treated as final flight parameters.
+
+Potential categories:
+
+EPS / Power:
+- spacecraft_bus_voltage_v
+- spacecraft_bus_current_a
+- battery_voltage_v
+- battery_current_a
+- battery_temperature_c
+- battery_state_of_charge_percent
+- solar_array_voltage_v
+- solar_array_current_a
+- eps_state
+- eps_error_flags
+
+Thermal:
+- temperature_<sensor_name>_c
+- heater_<id>_state
+- thermal_warning_flags
+
+OBC / Computer:
+- obc_state
+- obc_uptime_s
+- obc_reset_count
+- obc_cpu_load_percent
+- obc_memory_usage_percent
+- obc_storage_usage_percent
+- obc_last_reset_reason
+- obc_error_flags
+
+Communications:
+- spacecraft_radio_state
+- spacecraft_tx_count
+- spacecraft_rx_count
+- spacecraft_comms_error_count
+- spacecraft_rssi_dbm
+- spacecraft_snr_db
+
+ADCS, payload, GNSS, or other subsystem telemetry:
+- TBD based on actual spacecraft interfaces.
+
+Each real spacecraft parameter must eventually include:
+- Exact parameter name
+- Exact source
+- Exact packet ID
+- Exact byte offset
+- Exact encoding
+- Exact scaling
+- Exact unit
+- Exact range
+- Exact warning/critical thresholds
+- Exact update rate
+
+
+8. COMMAND DEFINITIONS
+======================
+
+Commands must be defined using a shared command format.
+
+Common command metadata:
+
+- command_id
+- command_name
+- source_id
+- destination_id
+- sequence_number
+- timestamp
+- parameter_count
+- parameters/payload
+- CRC
+- timeout
+- acknowledgement requirement
+
+
+8.1 COMMAND STATUS VALUES
+
+Recommended logical states:
+
+- CREATED
+- QUEUED
+- SENT
+- RECEIVED
+- ACCEPTED
+- EXECUTING
+- ACK
+- NACK
+- TIMEOUT
+- FAILED
+
+
+8.2 INITIAL COMMAND CATEGORIES
+
+Exact commands are TBD.
+
+System commands:
+- PING
+- REQUEST_STATUS
+- RESET_SOFTWARE
+- RESTART_SERVICE
+- SET_MODE
+
+Radio commands:
+- RADIO_ENABLE
+- RADIO_DISABLE
+- RADIO_SET_FREQUENCY
+- RADIO_SET_TX_POWER
+- RADIO_SET_CHANNEL
+- RADIO_SET_MODE
+
+CAN commands:
+- CAN_SEND_FRAME
+- CAN_RESET_INTERFACE
+- CAN_SET_BITRATE - only if allowed
+
+SDR commands:
+- SDR_START_RX
+- SDR_STOP_RX
+- SDR_SET_FREQUENCY
+- SDR_SET_SAMPLE_RATE
+- SDR_SET_GAIN
+
+Simulator-only commands:
+- SIM_INJECT_CRC_ERROR
+- SIM_INJECT_PACKET_DROP
+- SIM_INJECT_LINK_LOSS
+- SIM_INJECT_HIGH_TEMPERATURE
+- SIM_INJECT_CAN_ERROR
+- SIM_RESET_FAULTS
+
+Final command list must be confirmed with subsystem owners.
+
+
+9. ACK / NACK DEFINITIONS
+=========================
+
+ACK fields should include:
+
+- command_id
+- command_sequence
+- response_timestamp
+- source_id
+- status
+- result_code
+- optional message
+
+NACK/error reasons should distinguish at least:
+
+- UNKNOWN_COMMAND
+- INVALID_PARAMETER
+- INVALID_RANGE
+- INVALID_STATE
+- INVALID_CRC
+- INVALID_LENGTH
+- HARDWARE_UNAVAILABLE
+- COMMUNICATION_ERROR
+- TIMEOUT
+- INTERNAL_ERROR
+- PERMISSION_DENIED / NOT_ALLOWED if required
+
+
+10. CRC / VALIDATION / ERROR HANDLING
+=====================================
+
+10.1 CRC
+
+Final CRC definition:
+- Algorithm: TBD
+- Polynomial: TBD
+- Initial value: TBD
+- Reflection: TBD
+- XOR-out: TBD
+- Endianness: TBD
+- Covered bytes: TBD
+
+10.2 Validation order
+
+Recommended order:
+
+1. Receive raw message.
+2. Validate minimum length.
+3. Validate protocol version.
+4. Validate message type.
+5. Validate declared payload length.
+6. Validate CRC.
+7. Validate packet/message ID.
+8. Parse payload.
+9. Validate field ranges where applicable.
+10. Convert to internal telemetry/command model.
+11. Forward to GUI/logging/business logic.
+
+10.3 Invalid packet handling
+
+Invalid packets shall:
+- Not crash the receiver.
+- Produce an error/event log entry.
+- Increment appropriate counters.
+- Preserve raw packet data where useful for debugging.
+- Be rejected from normal telemetry processing when integrity is not trusted.
+
+
+11. SIMULATOR REQUIREMENTS
+==========================
+
+The simulator is not only a random data generator.
+
+It shall emulate the same interfaces used by the real system.
+
+11.1 Normal behaviour
+
+Telemetry values should:
+- Start from realistic nominal values.
+- Change gradually over time.
+- Respect configured physical/engineering ranges.
+- Use the same packet/message definitions as real data.
+- Maintain sequence counters.
+- Maintain timestamps.
+- Produce valid CRC by default.
+- Support realistic state transitions.
+
+11.2 Fault injection
+
+The simulator should allow deliberate injection of:
+
+- CRC error
+- Invalid packet length
+- Invalid packet ID
+- Packet loss
+- Duplicate packet
+- Out-of-order packet
+- Delayed packet
+- Communication timeout
+- Raspberry Pi disconnect
+- Radio disconnect
+- Low RSSI
+- Low SNR
+- CAN error
+- CAN bus-off
+- SDR overrun
+- High temperature
+- Low/high voltage
+- Invalid command
+- NACK response
+- Missing ACK
+- Software process failure
+
+11.3 Simulator controls
+
+Faults may eventually be triggered through:
+- GUI buttons
+- Configuration file
+- Command line
+- Test scripts
+
+Final method: TBD.
+
+
+12. MCS GUI REQUIREMENTS
+========================
+
+Main sections:
+
+12.1 Connection / System Status
+Display:
+- MCS communication status
+- Raspberry Pi status
+- heartbeat status
+- radio status
+- CAN status
+- SDR status
+- active transport
+- last message time
+- global warning/error indicator
+
+12.2 Telemetry
+Display subsystem-grouped telemetry:
+- Raspberry Pi
+- communication link
+- radio
+- SDR
+- CAN
+- spacecraft telemetry
+
+12.3 Packet Monitor
+Display at minimum:
+- timestamp
+- sequence number
+- source
+- message type
+- packet ID
+- payload length
+- CRC status
+- parse status
+
+Optional:
+- raw hexadecimal packet
+- decoded packet details
+
+12.4 Command Panel
+Provide:
+- command selection
+- destination selection
+- parameter input
+- send control
+- command history
+- ACK/NACK/timeout status
+
+12.5 Event / Error Log
+Display:
+- timestamp
+- severity
+- source
+- event/error code
+- message
+
+Severity levels:
+- DEBUG
+- INFO
+- WARNING
+- ERROR
+- CRITICAL
+
+12.6 GUI threading requirement
+
+- GUI thread must not perform blocking network or hardware I/O.
+- Communication receive operations shall eventually run in worker threads
+  using QThread and Signal/Slot or equivalent safe Qt design.
+
+
+13. LOGGING REQUIREMENTS
+========================
+
+The system should support persistent logging.
+
+Log categories:
+- Application log
+- Communication log
+- Telemetry log
+- Command log
+- Error/event log
+- Raw packet log - optional/configurable
+
+Each log record should contain:
+- timestamp
+- severity
+- source
+- event/message type
+- identifier/code
+- human-readable description
+
+Telemetry log should additionally include:
+- sequence number
+- packet ID
+- parameter values
+
+Command log should include:
+- command ID
+- destination
+- parameters
+- send timestamp
+- result
+- response timestamp
+
+Log file format:
+- CSV / JSON / SQLite / combination: TBD
+
+
+14. CONFIGURATION REQUIREMENTS
+==============================
+
+The software should avoid hard-coded environment-specific values.
+
+Configuration should eventually include:
+- MCS network address
+- Raspberry Pi network address
+- ZeroMQ ports
+- MQTT broker information
+- update rates
+- log paths
+- simulator settings
+- threshold values
+- enabled subsystems
+
+Requirements:
+- No Windows-only paths.
+- Must remain portable to Linux.
+- Use pathlib or platform-neutral file handling.
+- Secrets/passwords must not be committed to the repository.
+
+
+15. SOFTWARE MODULE RESPONSIBILITIES
+====================================
+
+Recommended logical modules:
+
+common/
+- Shared enums
+- Shared message/packet definitions
+- Telemetry definitions
+- Command definitions
+- CRC implementation
+- Serialization/deserialization definitions
+
+mcs/
+- GUI
+- communication abstraction
+- ZeroMQ transport
+- MQTT transport
+- packet receiver
+- parser
+- telemetry processing
+- command generation
+- logging
+
+raspberry/
+- hardware interfaces
+- telemetry collection
+- message creation
+- command handling
+- transport endpoint
+- local health monitoring
+- logging
+
+simulator/
+- hardware simulation
+- telemetry generation
+- fault injection
+- command-response simulation
+
+tests/
+- CRC tests
+- parser tests
+- packet serialization tests
+- transport tests
+- simulator tests
+- command tests
+
+
+16. REPOSITORY TARGET STRUCTURE
+===============================
+
+Proposed target:
+
+UREX_MCS_Prototype/
+|
++-- main.py
+|
++-- mcs/
+|   +-- __init__.py
+|   +-- gui/
+|   +-- communication/
+|   +-- processing/
+|   +-- logging/
+|
++-- raspberry/
+|   +-- __init__.py
+|   +-- main.py
+|   +-- hardware/
+|   +-- telemetry/
+|   +-- command/
+|   +-- communication/
+|
++-- common/
+|   +-- __init__.py
+|   +-- telemetry.py
+|   +-- packet.py
+|   +-- commands.py
+|   +-- enums.py
+|   +-- crc.py
+|
++-- simulator/
+|   +-- __init__.py
+|   +-- hardware_simulator.py
+|   +-- fault_injector.py
+|
++-- tests/
+|
++-- docs/
+|   +-- system_definition_v0.1.txt
+|
++-- requirements.txt
++-- README.md
++-- .gitignore
+
+
+17. OPEN DECISIONS / TEAM CONFIRMATION REQUIRED
+===============================================
+
+The following items must be decided before the software interfaces can be
+treated as stable.
+
+SYSTEM
+[ ] Final overall architecture
+[ ] Exact responsibilities of Raspberry Pi
+[ ] Exact responsibilities of MCS
+[ ] Exact responsibilities of SDR/CAN/radio software owners
+
+HARDWARE
+[ ] Raspberry Pi model
+[ ] Radio hardware/model
+[ ] SDR hardware/model
+[ ] CAN interface/model
+[ ] Hardware physical interfaces
+
+COMMUNICATION
+[ ] ZeroMQ topology/socket pattern
+[ ] ZeroMQ ports
+[ ] MQTT broker
+[ ] MQTT topic structure
+[ ] MQTT QoS
+[ ] Heartbeat mechanism
+[ ] Timeout/reconnection policy
+
+PACKET
+[ ] Binary vs JSON vs other serialization
+[ ] Header structure
+[ ] Packet IDs
+[ ] Source/destination IDs
+[ ] Sequence number width
+[ ] Timestamp format
+[ ] Byte order
+[ ] Payload encoding
+[ ] Maximum packet size
+[ ] CRC algorithm
+
+TELEMETRY
+[ ] Full radio telemetry list
+[ ] Full CAN telemetry list
+[ ] Full SDR telemetry list
+[ ] Full spacecraft telemetry list
+[ ] Data types
+[ ] Units
+[ ] Scaling
+[ ] Update rates
+[ ] Nominal ranges
+[ ] Warning thresholds
+[ ] Critical thresholds
+
+COMMANDS
+[ ] Full command list
+[ ] Command IDs
+[ ] Command parameter types
+[ ] Valid parameter ranges
+[ ] ACK/NACK behaviour
+[ ] Command timeout
+[ ] Retry policy
+
+LOGGING
+[ ] Required persistent logs
+[ ] Log format
+[ ] Retention policy
+[ ] Raw packet logging requirement
+
+SIMULATOR
+[ ] Required simulated hardware
+[ ] Required telemetry set
+[ ] Required fault scenarios
+[ ] Required timing behaviour
+
+
+18. IMPLEMENTATION RULE
+=======================
+
+Until the above team-level interface definitions are agreed:
+
+- Code may use placeholders and clearly marked TBD values.
+- Do not hard-code assumed hardware specifications as final.
+- Do not let GUI-specific decisions define protocol formats.
+- Do not let simulator-specific decisions define real hardware interfaces.
+- Shared definitions should become the single source of truth once agreed.
+- Raspberry Pi, simulator, communication, packet parser, and MCS GUI should all
+  consume the same shared definitions.
+
+
+END OF DOCUMENT
