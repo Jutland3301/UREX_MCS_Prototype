@@ -8,6 +8,13 @@ Purpose: Initial shared system/interface definition before detailed simulator,
          Raspberry Pi software, packet-processing, and MCS GUI implementation.
 Status: Draft / Team Review Required
 
+Implementation note (2026-09-03):
+The simulator now exercises a profile-driven binary encoder/parser pipeline,
+partial telemetry state merging, transport abstraction, real parser error
+handling, and provisional golden-vector tests. Hardware-facing values remain
+TBD in this document; current executable assumptions are isolated in
+packet/profiles.py and summarized in PROTOCOL_ASSUMPTIONS.md.
+
 This document intentionally uses "TBD" for values that must be confirmed with
 the hardware, radio, CAN, Raspberry Pi, SDR, or supervisor/team members.
 Do not replace TBD values by assumption unless the team explicitly agrees.

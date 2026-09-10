@@ -21,14 +21,9 @@ class Packet:
     destination_id: int = 0
     packet_id: int = 0
     sequence_number: int = 0
+    flags: int = 0
     timestamp: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
     payload: dict[str, Any] = field(default_factory=dict)
     crc: int | None = None
-
-    @property
-    def payload_length(self) -> int:
-        # Placeholder logical length.
-        # Replace when the serialization format is finalized.
-        return len(repr(self.payload).encode("utf-8"))

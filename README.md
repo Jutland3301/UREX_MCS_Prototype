@@ -1,118 +1,180 @@
-# UREX Mission Control System (MCS) Prototype
+# UREX Mission Control System Simulator v0.3.b
 
-Prototype Mission Control System software for UREX.
+PySide6 MCS simulator with a **Protocol Buffers packet contract** and a
+hardware-facing **CRC-16/CCITT-FALSE** frame.
 
-The current repository establishes the initial MCS software architecture, shared telemetry models, telemetry simulator, and GUI. Hardware communication and packet parsing are intentionally left incomplete until the corresponding interfaces are agreed with the hardware/communications team.
+PySide6 remains the GUI layer. Packet serialization/deserialization is handled
+by generated Protocol Buffers message classes, while the UREX frame provides
+message length and mandatory application CRC validation.
 
-## Current Architecture
+The telemetry field set and IDs are still provisional until the hardware team
+approves the interface. The encoding architecture itself is now designed for
+one cross-language schema rather than hand-written Python `struct` layouts.
 
-```text
-Telemetry Simulator
-        |
-        | TelemetryFrame
-        v
-      MCS GUI
-        |
-        +-- System / Connection Status
-        +-- Telemetry Display
-        +-- Packet Monitor
-        +-- Command Panel
-        +-- Event / Error Log
-```
-
-The simulator currently generates system, RF, SDR, CAN, and spacecraft telemetry and passes it to the GUI through the common `TelemetryFrame` model.
-
-The simulator currently bypasses the communication and packet-processing layers. These layers will later connect external telemetry sources to the same common MCS interfaces.
-
-## Repository Structure
+## Data path
 
 ```text
-UREX_MCS/
-|
-+-- common/
-|   +-- telemetry.py
-|   +-- commands.py
-|   +-- packet.py
-|   +-- enums.py
-|   +-- crc.py
-|
-+-- simulator/
-|   +-- telemetry_simulator.py
-|
-+-- gui/
-|   +-- main_window.py
-|
-+-- packet/
-|   +-- parser.py
-|
-+-- communication/
-|   +-- base_transport.py
-|
-+-- system_definition_v0.1.txt
-+-- README.md
+PySide6 / TelemetrySimulator / ManualPacketSource
+                    |
+                    v
+              logical Packet
+                    |
+                    v
+        generated urex_pb2 classes
+          SerializeToString()
+                    |
+                    v
+     UREX frame + CRC-16/CCITT-FALSE
+                    |
+                    v
+          transport as raw bytes
+                    |
+                    v
+       frame length + CRC validation
+                    |
+                    v
+           ParseFromString()
+                    |
+                    v
+        TelemetryState -> PySide6 GUI
 ```
 
-### `common/`
+A CRC-failed frame is rejected **before** Protobuf decoding and cannot update
+GUI telemetry state.
 
-Contains shared data structures used across the MCS.
+## One packet definition for multiple languages
 
-* **`telemetry.py`** - Common telemetry models, including system, Ethernet, RF, SDR, CAN, spacecraft, and packet metadata.
-* **`commands.py`** - Command-related data models.
-* **`packet.py`** - Common packet representation.
-* **`enums.py`** - Shared enumerations and states.
-* **`crc.py`** - CRC functionality. Current implementation is provisional until the final packet protocol is defined.
+The authoritative wire schema is:
 
-### `simulator/`
+```text
+schema/urex.proto
+```
 
-**`telemetry_simulator.py`** provides simulated telemetry for MCS development without hardware.
+The current packet payload IDs are represented directly by the Protobuf
+`oneof` field numbers:
 
-It currently models:
+| Payload | Field / packet ID |
+| --- | ---: |
+| `rpi_status` | `0x0101` / 257 |
+| `radio_status` | `0x0201` / 513 |
+| `sdr_status` | `0x0301` / 769 |
+| `can_status` | `0x0401` / 1025 |
+| `spacecraft_power` | `0x0501` / 1281 |
 
-* Raspberry Pi/system health
-* Ethernet/link status
-* Radio/RF parameters
-* SDR state
-* CAN state
-* Spacecraft power and OBC telemetry
-* Time-varying system behaviour
-* Fault conditions such as packet loss, CRC errors, link loss, high temperature, low voltage, weak RF, CAN errors/BUS-OFF, and SDR overruns
+Python and C++ bindings can therefore be generated from the same `.proto`
+instead of maintaining separate packet layouts. For plain C, use a compatible
+generator such as nanopb or protobuf-c against the same schema.
 
-Simulator output uses the same `TelemetryFrame` model intended for real telemetry.
+## CRC framing
 
-### `gui/`
+Protobuf provides serialization, not a hardware integrity checksum, so v0.3.b
+keeps a deliberately small outer frame:
 
-**`main_window.py`** implements the current PySide6 MCS GUI prototype.
+```text
+"UX" magic             2 bytes
+frame version           1 byte
+protobuf body length    4 bytes, big endian
+urex.UrexPacket         variable length
+CRC-16/CCITT-FALSE      2 bytes, big endian
+```
 
-Current interfaces include:
+CRC coverage is the complete frame header plus serialized Protobuf body.
+Application CRC is mandatory in the active v0.3.b profile.
 
-* System and connection status
-* Telemetry monitoring
-* Packet monitoring
-* Command interface
-* Event/error logging
+## What changed from v0.3-alpha
 
-The GUI consumes `TelemetryFrame` objects and is intended to remain independent of whether telemetry originates from the simulator or real hardware.
+The previous codec used `FieldSpec.to_wire()`, numeric scaling/sentinels,
+`struct.pack()`, a fixed packet header, and matching manual decode logic.
+v0.3.b replaces that wire logic with Protocol Buffers. `packet/profiles.py`
+now contains only simulator/UI metadata such as units, ranges, source/target,
+and update period; it no longer determines primitive byte widths or packet
+endianness.
 
-### `packet/`
+Optional Protobuf scalar fields replace values such as `0xFFFFFFFF` and
+`-32768` that previously represented missing telemetry.
 
-**`parser.py`** is reserved for converting incoming raw packets into the common MCS data model.
+## Important files
 
-Implementation is intentionally deferred until packet structure, field widths, byte order, CRC scheme, and related communication details are agreed with the hardware/communications team.
+- `schema/urex.proto` — authoritative language-neutral packet definition
+- `packet/generated/urex_pb2.py` — Python Protobuf binding used at runtime
+- `scripts/generate_protobuf.py` — compiler entry point for Python/C++ bindings
+- `packet/encoder.py` — logical packet -> Protobuf -> CRC frame
+- `packet/parser.py` — frame/CRC validation -> Protobuf -> telemetry fields
+- `packet/protocol.py` — CRC/frame configuration and GUI metadata models
+- `packet/profiles.py` — provisional simulator metadata, not binary packing
+- `communication/base_transport.py` — transport-independent raw-byte interface
 
-### `communication/`
+## Generate Protobuf bindings
 
-**`base_transport.py`** is reserved for the transport abstraction between the MCS and external systems.
+Development setup:
 
-The final implementation may support transports such as ZeroMQ or MQTT depending on the agreed system architecture.
+```bash
+python -m pip install -r requirements-dev.txt
+python scripts/generate_protobuf.py
+```
 
-### `system_definition_v0.1.txt`
+To generate C++ at the same time:
 
-Draft MCS system definition covering the intended architecture, telemetry, packet handling, commands, communication, fault handling, and hardware interfaces.
+```bash
+python scripts/generate_protobuf.py --cpp-out generated/cpp
+```
 
-Items marked **TBD** are intentionally unresolved and require further hardware/software integration decisions.
+The repository includes a Python binding so the simulator can run without
+requiring `protoc` at runtime. CI regenerates it from `schema/urex.proto` before
+testing.
 
-## Next Integration Step
+## Run
 
-The next major step is to agree on the **packet and communication interfaces** with the hardware/communications team.
+```bash
+python -m pip install -r requirements.txt
+python main.py
+```
 
-Once these interfaces are defined, the packet parser and communication layer can be implemented without changing the existing simulator/GUI telemetry model.
+Headless experiment:
+
+```bash
+python -m simulator.headless_runner --duration 60 --burst 5 \
+  --drop 2 --corrupt 1 --delay 50 --jitter 10 \
+  --output results/run.json
+```
+
+## Test
+
+```bash
+pytest -q
+```
+
+v0.3.b adds tests for generated Protobuf serialization, schema-derived packet
+IDs, optional-field presence, mandatory CRC, CRC-before-decode rejection,
+valid-CRC semantic failures, simulator fault injection, and the existing
+transport/experiment behavior.
+
+See `PROTOCOL_ASSUMPTIONS.md` for the remaining hardware questions.
+
+## Windows release build and digital signing
+
+`run.bat` and `setup_and_run.bat` are now **development-only launchers**. Do not
+use them as the user-facing release entry point.
+
+Build the Windows release application with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
+```
+
+The generated release entry point is:
+
+```text
+dist\UREX_MCS_Simulator\UREX_MCS_Simulator.exe
+```
+
+Before distribution, sign that executable with the project's Authenticode
+code-signing identity:
+
+```powershell
+.\scripts\sign_windows.ps1 -CertificateThumbprint "<THUMBPRINT>"
+```
+
+The signing script uses SHA-256 plus an RFC 3161 timestamp and verifies the
+result after signing. See `docs/WINDOWS_SIGNING.md` for certificate choices,
+SmartScreen behavior, and the release procedure.

@@ -26,9 +26,21 @@ class PacketMeta:
         default_factory=lambda: datetime.now(timezone.utc)
     )
     payload_length: int = 0
-    crc_value: int | None = None
-    crc_status: CRCStatus = CRCStatus.NOT_CHECKED
+    total_length: int = 0
+    application_crc_value: int | None = None
+    application_crc_status: CRCStatus = CRCStatus.NOT_CHECKED
+    source_crc_status: CRCStatus = CRCStatus.NOT_CHECKED
     parse_status: ParseStatus = ParseStatus.OK
+
+    @property
+    def crc_value(self) -> int | None:
+        """Compatibility alias for the Pi-to-MCS application CRC."""
+        return self.application_crc_value
+
+    @property
+    def crc_status(self) -> CRCStatus:
+        """Compatibility alias for the Pi-to-MCS application CRC status."""
+        return self.application_crc_status
 
 
 @dataclass

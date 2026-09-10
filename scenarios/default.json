@@ -1,0 +1,77 @@
+{
+  "experiment": {
+    "burst_size": 1,
+    "duration_s": 60.0,
+    "scheduler_interval_ms": 20
+  },
+  "name": "UREX provisional manual scenario",
+  "network": {
+    "corruption_rate_percent": 0.0,
+    "delay_ms": 0.0,
+    "drop_rate_percent": 0.0,
+    "jitter_ms": 0.0
+  },
+  "packet_values": {
+    "CAN_STATUS": {
+      "bitrate_bps": 500000,
+      "bus_off_count": 0,
+      "error_count": 0,
+      "last_rx_id": 256,
+      "last_tx_id": 256,
+      "rx_frame_count": 0,
+      "status": "UP",
+      "tx_frame_count": 0
+    },
+    "RADIO_STATUS": {
+      "bitrate_bps": 9600,
+      "channel_id": 1,
+      "frequency_hz": 437000000,
+      "lock_status": true,
+      "pa_temperature_c": 42.0,
+      "packet_loss_count": 0,
+      "rssi_dbm": -67.0,
+      "rx_error_count": 0,
+      "rx_packet_count": 0,
+      "snr_db": 12.0,
+      "state": "RX",
+      "tx_packet_count": 0,
+      "tx_power_dbm": 20.0
+    },
+    "RPI_STATUS": {
+      "cpu_temperature_c": 48.0,
+      "cpu_usage_percent": 18.0,
+      "disk_usage_percent": 21.0,
+      "error_count": 0,
+      "memory_usage_percent": 32.0,
+      "process_status": "RUNNING",
+      "restart_count": 0,
+      "uptime_s": 0
+    },
+    "SDR_STATUS": {
+      "bandwidth_hz": 200000,
+      "center_frequency_hz": 437000000,
+      "error_count": 0,
+      "gain_db": 20.0,
+      "overrun_count": 0,
+      "rx_sample_count": 0,
+      "sample_rate_sps": 1000000,
+      "status": "RECEIVING",
+      "underrun_count": 0
+    },
+    "SPACECRAFT_POWER": {
+      "battery_state_of_charge_percent": 78.0,
+      "battery_temperature_c": 28.0,
+      "obc_state": "NOMINAL",
+      "spacecraft_bus_current_a": 0.65,
+      "spacecraft_bus_voltage_v": 5.0
+    }
+  },
+  "random_seed": 3301,
+  "update_periods_s": {
+    "CAN_STATUS": 1.0,
+    "RADIO_STATUS": 1.0,
+    "RPI_STATUS": 1.0,
+    "SDR_STATUS": 1.0,
+    "SPACECRAFT_POWER": 1.0
+  }
+}

@@ -14,6 +14,7 @@ from common.enums import (
     RadioState,
     SDRStatus,
 )
+from common.packet import Packet
 from common.telemetry import (
     CANTelemetry,
     LinkTelemetry,
@@ -24,6 +25,8 @@ from common.telemetry import (
     SpacecraftTelemetry,
     TelemetryFrame,
 )
+from packet.encoder import PacketEncoder
+from packet.generated import urex_pb2
 
 
 class TelemetrySimulator:
@@ -42,10 +45,13 @@ class TelemetrySimulator:
         self.start_monotonic = time.monotonic()
 
         self.sequence_number = 0
+        self.wire_sequence_number = 0
         self.packet_receive_count = 0
         self.packet_drop_count = 0
         self.packet_crc_error_count = 0
         self.packet_parse_error_count = 0
+        self.last_generation_status = "STARTING"
+        self._last_emit_monotonic: dict[int, float] = {}
 
         # Raspberry Pi state
         self.rpi_cpu_temperature_c = 48.0
@@ -310,8 +316,9 @@ class TelemetrySimulator:
             sequence_number=self.sequence_number,
             timestamp=now,
             payload_length=0,  # Final serialization is still TBD.
-            crc_value=None,
-            crc_status=crc_status,
+            total_length=0,
+            application_crc_value=None,
+            application_crc_status=crc_status,
             parse_status=parse_status,
         )
 
@@ -330,7 +337,7 @@ class TelemetrySimulator:
                 if self.link_status == LinkStatus.CONNECTED
                 else ProcessStatus.DEGRADED
             ),
-            software_version="0.1.0-sim",
+            software_version="0.2.0-sim",
             restart_count=0,
             error_count=(
                 self.packet_crc_error_count
@@ -427,6 +434,87 @@ class TelemetrySimulator:
             spacecraft=spacecraft,
             raw_packet=b"",
         )
+
+    def generate_messages(self, encoder: PacketEncoder) -> list[bytes]:
+        """Encode due simulator telemetry through the real binary packet path."""
+
+        frame = self.generate_frame()
+        if frame is None:
+            self.last_generation_status = "DROPPED"
+            return []
+        if frame.link.status != LinkStatus.CONNECTED:
+            self.last_generation_status = "LINK_DOWN"
+            return []
+
+        current_monotonic = time.monotonic()
+        messages: list[bytes] = []
+        for definition in encoder.profile.packet_definitions:
+            last_emit = self._last_emit_monotonic.get(definition.packet_id)
+            if (
+                last_emit is not None
+                and current_monotonic - last_emit < definition.update_period_s * 0.95
+            ):
+                continue
+
+            target = getattr(frame, definition.target)
+            source_values = (
+                target.parameters
+                if definition.target == "spacecraft"
+                else vars(target)
+            )
+            payload = {
+                field.name: source_values.get(field.name)
+                for field in definition.fields
+            }
+            self.wire_sequence_number = (self.wire_sequence_number + 1) & 0xFFFFFFFF
+            packet = Packet(
+                protocol_version=encoder.profile.protocol_version,
+                message_type=definition.message_type,
+                source_id=definition.source_id,
+                destination_id=100,
+                packet_id=definition.packet_id,
+                sequence_number=self.wire_sequence_number,
+                timestamp=frame.meta.timestamp,
+                payload=payload,
+            )
+            messages.append(encoder.encode(packet))
+            self._last_emit_monotonic[definition.packet_id] = current_monotonic
+
+        if messages and frame.meta.application_crc_status == CRCStatus.FAIL:
+            corrupted = bytearray(messages[0])
+            trailer_offset = len(corrupted) - len(encoder.profile.terminator) - 1
+            corrupted[trailer_offset] ^= 0x01
+            messages[0] = bytes(corrupted)
+
+        if messages and frame.meta.parse_status != ParseStatus.OK:
+            # Build a syntactically valid Protobuf packet with an unsupported
+            # protocol version, then recompute CRC. This exercises semantic
+            # validation rather than merely corrupting the outer frame.
+            raw = messages[0]
+            terminator_size = len(encoder.profile.terminator)
+            message = raw[:-terminator_size] if terminator_size else raw
+            protobuf_start = encoder.profile.header_size
+            protobuf_end = len(message) - encoder.profile.crc_size
+            proto = urex_pb2.UrexPacket()
+            proto.ParseFromString(message[protobuf_start:protobuf_end])
+            proto.protocol_version = 0xFF
+            protobuf_bytes = proto.SerializeToString(deterministic=True)
+            frame_header = encoder.profile.frame.pack(len(protobuf_bytes))
+            crc_value = encoder.profile.crc.calculator(
+                encoder.profile.crc.material(frame_header, protobuf_bytes)
+            )
+            messages[0] = (
+                frame_header
+                + protobuf_bytes
+                + crc_value.to_bytes(
+                    encoder.profile.crc.width_bytes,
+                    encoder.profile.crc.byte_order,
+                )
+                + encoder.profile.terminator
+            )
+
+        self.last_generation_status = "OK" if messages else "NO_PACKETS_DUE"
+        return messages
 
     # ------------------------------------------------------------------
     # Fault injection API

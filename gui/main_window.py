@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
@@ -15,14 +16,26 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from common.enums import CANStatus, CRCStatus, LinkStatus, RadioState, SDRStatus
+from common.enums import CANStatus, LinkStatus, RadioState, SDRStatus
 from common.telemetry import TelemetryFrame
-from simulator.telemetry_simulator import TelemetrySimulator
+from common.telemetry_state import TelemetryState
+from communication.base_transport import TransportStatus
+from communication.simulated_transport import SimulatedTransport
+from gui.experiment_panel import ExperimentPanel
+from gui.simulator_control_panel import SimulatorControlPanel
+from measurement.metrics_collector import MetricsCollector
+from packet.encoder import PacketEncoder
+from packet.parser import PacketParser, ParseResult
+from packet.profiles import PROVISIONAL_PROFILE
+from simulator.manual_packet_source import ManualPacketSource
+from simulator.scenario_config import NetworkConditions, ScenarioConfig
+from simulator.scenario_controller import ExperimentState, ScenarioController
 
 
 class MainWindow(QMainWindow):
@@ -36,19 +49,49 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        self.setWindowTitle("UREX Mission Control System")
+        self.setWindowTitle("UREX MCS Simulator v0.3.b")
         self.resize(1180, 820)
 
-        self.simulator = TelemetrySimulator(update_period_s=1.0)
+        self.profile = PROVISIONAL_PROFILE
+        self.encoder = PacketEncoder(self.profile)
+        self.parser = PacketParser(self.profile)
+        self.telemetry_state = TelemetryState(self.profile)
+        self.scenario_path = (
+            Path(__file__).resolve().parents[1] / "scenarios" / "default.json"
+        )
+        self.scenario = ScenarioConfig.load(self.scenario_path)
+        self.source = ManualPacketSource(self.profile, self.scenario)
+        self.metrics = MetricsCollector()
+        self.transport = SimulatedTransport(
+            self.scenario.network,
+            random_seed=self.scenario.random_seed,
+        )
+        self.controller = ScenarioController(
+            self.source,
+            self.encoder,
+            self.transport,
+            self.metrics,
+        )
+        self._last_alert_link_status: LinkStatus | None = None
+        self._last_alert_can_status: CANStatus | None = None
 
         self._build_ui()
 
+        self.transport.set_message_handler(self._handle_raw_message)
+        self.transport.set_status_handler(self._handle_transport_status)
+        self.transport.set_event_handler(self.metrics.record_transport_event)
+        self.transport.start()
+
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self._poll_simulator)
-        self.timer.start(1000)
+        self.timer.timeout.connect(self._experiment_tick)
+        self.timer.start(self.scenario.experiment.scheduler_interval_ms)
 
         self._append_log("INFO", "MCS", "Application started")
-        self._append_log("INFO", "SIM", "Telemetry simulator connected")
+        self._append_log(
+            "INFO",
+            "SIM",
+            f"Manual experiment simulator ready using {self.profile.name}",
+        )
 
     # ------------------------------------------------------------------
     # UI construction
@@ -59,15 +102,34 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         root = QVBoxLayout(central)
+        tabs = QTabWidget()
+        root.addWidget(tabs)
 
+        monitor_page = QWidget()
+        monitor = QVBoxLayout(monitor_page)
         top = QHBoxLayout()
         top.addWidget(self._build_system_status_group(), 1)
         top.addWidget(self._build_telemetry_group(), 2)
-        root.addLayout(top)
+        monitor.addLayout(top)
 
-        root.addWidget(self._build_packet_monitor_group(), 2)
-        root.addWidget(self._build_command_group())
-        root.addWidget(self._build_event_log_group(), 1)
+        monitor.addWidget(self._build_packet_monitor_group(), 2)
+        monitor.addWidget(self._build_command_group())
+        monitor.addWidget(self._build_event_log_group(), 1)
+        tabs.addTab(monitor_page, "MCS Monitor")
+
+        experiment_page = QWidget()
+        experiment_layout = QHBoxLayout(experiment_page)
+        self.simulator_control_panel = SimulatorControlPanel(self.source)
+        self.simulator_control_panel.set_network_conditions(self.scenario.network)
+        self.experiment_panel = ExperimentPanel(
+            self.scenario.experiment.duration_s,
+            self.scenario.experiment.burst_size,
+        )
+        experiment_layout.addWidget(self.simulator_control_panel, 3)
+        experiment_layout.addWidget(self.experiment_panel, 2)
+        tabs.addTab(experiment_page, "Simulator Experiment")
+
+        self._connect_experiment_controls()
 
     def _status_label(self, initial: str = "-") -> QLabel:
         label = QLabel(initial)
@@ -159,7 +221,7 @@ class MainWindow(QMainWindow):
         group = QGroupBox("Packet Monitor")
         layout = QVBoxLayout(group)
 
-        self.packet_table = QTableWidget(0, 8)
+        self.packet_table = QTableWidget(0, 9)
         self.packet_table.setHorizontalHeaderLabels(
             [
                 "Time",
@@ -170,6 +232,7 @@ class MainWindow(QMainWindow):
                 "Length",
                 "CRC",
                 "Parse",
+                "Raw Hex",
             ]
         )
         self.packet_table.horizontalHeader().setSectionResizeMode(
@@ -242,14 +305,56 @@ class MainWindow(QMainWindow):
     # Telemetry update
     # ------------------------------------------------------------------
 
-    def _poll_simulator(self) -> None:
-        frame = self.simulator.generate_frame()
+    def _experiment_tick(self) -> None:
+        previous_state = self.controller.state
+        self.controller.tick()
+        self.experiment_panel.update_state(self.controller.state)
+        self.experiment_panel.update_metrics(
+            self.metrics.snapshot(self.transport.queue_depth)
+        )
 
-        if frame is None:
-            self._append_log("WARNING", "SIM", "Simulated packet drop")
+        if previous_state != self.controller.state:
+            self._append_log(
+                "INFO",
+                "EXPERIMENT",
+                f"State changed to {self.controller.state.value}",
+            )
+
+        if self.controller.state in {
+            ExperimentState.RUNNING,
+            ExperimentState.PAUSED,
+        }:
+            self.update_telemetry(self.telemetry_state.refresh_staleness())
+
+    def _handle_raw_message(self, raw_packet: bytes) -> None:
+        result = self.parser.parse(raw_packet)
+        self.metrics.record_parse_result(result)
+        self._append_packet_result(result)
+
+        if not result.ok:
+            frame = self.telemetry_state.record_parse_failure()
+            self._update_status_panel(frame)
+            details = "; ".join(result.errors) or "unknown parser error"
+            self._append_log(
+                "ERROR",
+                "PACKET",
+                f"{result.status.value}: {details}",
+            )
             return
 
+        frame = self.telemetry_state.apply(result)
         self.update_telemetry(frame)
+
+    def _handle_transport_status(self, status: TransportStatus) -> None:
+        self.transport_label.setText(f"{self.transport.name} / {status.value}")
+        if status in {
+            TransportStatus.STOPPED,
+            TransportStatus.DISCONNECTED,
+            TransportStatus.ERROR,
+        }:
+            self.update_telemetry(
+                self.telemetry_state.set_transport_connected(False)
+            )
 
     def update_telemetry(self, frame: TelemetryFrame) -> None:
         """
@@ -261,36 +366,28 @@ class MainWindow(QMainWindow):
 
         self._update_status_panel(frame)
         self._update_telemetry_panel(frame)
-        self._append_packet_row(frame)
 
-        if frame.meta.crc_status == CRCStatus.FAIL:
-            self._append_log(
-                "ERROR",
-                "PACKET",
-                f"CRC validation failed for sequence {frame.meta.sequence_number}",
-            )
-
-        if frame.meta.parse_status.value != "OK":
-            self._append_log(
-                "ERROR",
-                "PACKET",
-                f"Parse failure for sequence {frame.meta.sequence_number}: "
-                f"{frame.meta.parse_status.value}",
-            )
-
-        if frame.link.status != LinkStatus.CONNECTED:
+        if (
+            frame.link.status != LinkStatus.CONNECTED
+            and frame.link.status != self._last_alert_link_status
+        ):
             self._append_log(
                 "WARNING",
                 "LINK",
                 f"MCS link status: {frame.link.status.value}",
             )
+        self._last_alert_link_status = frame.link.status
 
-        if frame.can.status in {CANStatus.ERROR, CANStatus.BUS_OFF}:
+        if (
+            frame.can.status in {CANStatus.ERROR, CANStatus.BUS_OFF}
+            and frame.can.status != self._last_alert_can_status
+        ):
             self._append_log(
                 "ERROR",
                 "CAN",
                 f"CAN status: {frame.can.status.value}",
             )
+        self._last_alert_can_status = frame.can.status
 
     def _update_status_panel(self, frame: TelemetryFrame) -> None:
         self.link_status_label.setText(frame.link.status.value)
@@ -308,6 +405,7 @@ class MainWindow(QMainWindow):
 
         total_errors = (
             frame.raspberry.error_count
+            + frame.link.rx_error_count
             + frame.radio.rx_error_count
             + frame.sdr.error_count
             + frame.can.error_count
@@ -369,19 +467,43 @@ class MainWindow(QMainWindow):
         )
         self.obc_state_label.setText(str(sc.get("obc_state", "-")))
 
-    def _append_packet_row(self, frame: TelemetryFrame) -> None:
+    def _append_packet_result(self, result: ParseResult) -> None:
         row = self.packet_table.rowCount()
         self.packet_table.insertRow(row)
 
+        meta = result.packet.meta if result.packet is not None else None
+        header = result.header
+        message_type = meta.message_type.value if meta is not None else "-"
+        if meta is None and header is not None:
+            try:
+                message_type = self.profile.code_to_message_type(
+                    header.message_type_code
+                ).value
+            except KeyError:
+                message_type = f"UNKNOWN({header.message_type_code})"
+
         values = [
-            frame.meta.timestamp.astimezone().strftime("%H:%M:%S"),
-            str(frame.meta.sequence_number),
-            str(frame.meta.source_id),
-            frame.meta.message_type.value,
-            f"0x{frame.meta.packet_id:04X}",
-            str(frame.meta.payload_length),
-            frame.meta.crc_status.value,
-            frame.meta.parse_status.value,
+            datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S"),
+            str(
+                meta.sequence_number
+                if meta is not None
+                else header.sequence_number if header is not None else "-"
+            ),
+            str(
+                meta.source_id
+                if meta is not None
+                else header.source_id if header is not None else "-"
+            ),
+            message_type,
+            (
+                f"0x{meta.packet_id:04X}"
+                if meta is not None
+                else f"0x{header.packet_id:04X}" if header is not None else "-"
+            ),
+            str(len(result.raw_packet)),
+            result.application_crc_status.value,
+            result.status.value,
+            result.raw_packet.hex(" ").upper(),
         ]
 
         for column, value in enumerate(values):
@@ -397,6 +519,152 @@ class MainWindow(QMainWindow):
 
         self.packet_table.scrollToBottom()
 
+    def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        self.controller.stop()
+        self.transport.stop()
+        super().closeEvent(event)
+
+    # ------------------------------------------------------------------
+    # Simulator experiment controls
+    # ------------------------------------------------------------------
+
+    def _connect_experiment_controls(self) -> None:
+        controls = self.simulator_control_panel
+        controls.field_update_requested.connect(self._set_manual_field)
+        controls.period_update_requested.connect(self._set_packet_period)
+        controls.send_once_requested.connect(self._send_manual_packet)
+        controls.raw_packet_requested.connect(self._send_raw_packet)
+        controls.network_update_requested.connect(self._set_network_conditions)
+        controls.save_scenario_requested.connect(self._save_scenario)
+
+        experiment = self.experiment_panel
+        experiment.start_requested.connect(self._start_experiment)
+        experiment.pause_resume_requested.connect(self._pause_resume_experiment)
+        experiment.stop_requested.connect(self._stop_experiment)
+        experiment.export_requested.connect(self._export_results)
+
+    def _set_manual_field(
+        self,
+        packet_name: str,
+        field_name: str,
+        value: str,
+    ) -> None:
+        try:
+            converted = self.source.set_value(packet_name, field_name, value)
+        except (RuntimeError, ValueError) as exc:
+            self.simulator_control_panel.set_message(str(exc), error=True)
+            return
+        self.simulator_control_panel.refresh_current_value()
+        self.simulator_control_panel.set_message(
+            f"Applied {packet_name}.{field_name}={converted}"
+        )
+
+    def _set_packet_period(self, packet_name: str, period_s: float) -> None:
+        try:
+            self.source.set_period_s(packet_name, period_s)
+        except (RuntimeError, ValueError) as exc:
+            self.simulator_control_panel.set_message(str(exc), error=True)
+
+    def _send_manual_packet(
+        self,
+        packet_name: str,
+        force_drop: bool,
+        force_corrupt: bool,
+    ) -> None:
+        try:
+            result = self.controller.send_once(
+                packet_name,
+                force_drop=force_drop,
+                force_corrupt=force_corrupt,
+            )
+        except (RuntimeError, ValueError) as exc:
+            self.simulator_control_panel.set_message(str(exc), error=True)
+            return
+        self.simulator_control_panel.set_message(
+            f"{packet_name}: {result}"
+        )
+
+    def _send_raw_packet(self, raw_hex: str) -> None:
+        try:
+            result = self.controller.send_raw_hex(raw_hex)
+        except (RuntimeError, ValueError) as exc:
+            self.simulator_control_panel.set_message(str(exc), error=True)
+            return
+        self.simulator_control_panel.set_message(f"Raw packet: {result}")
+
+    def _set_network_conditions(
+        self,
+        drop_percent: float,
+        corruption_percent: float,
+        delay_ms: float,
+        jitter_ms: float,
+    ) -> None:
+        conditions = NetworkConditions(
+            drop_rate_percent=drop_percent,
+            corruption_rate_percent=corruption_percent,
+            delay_ms=delay_ms,
+            jitter_ms=jitter_ms,
+        )
+        try:
+            self.transport.configure(conditions)
+        except ValueError as exc:
+            self.simulator_control_panel.set_message(str(exc), error=True)
+            return
+        self.scenario.network = conditions
+        self.simulator_control_panel.set_network_conditions(conditions)
+        self.simulator_control_panel.set_message("Network conditions applied")
+
+    def _start_experiment(self, duration_s: float, burst_size: int) -> None:
+        self.packet_table.setRowCount(0)
+        self.controller.start(duration_s, burst_size)
+        self.experiment_panel.update_state(self.controller.state)
+        self._append_log(
+            "INFO",
+            "EXPERIMENT",
+            f"Started duration={duration_s:.1f}s burst={burst_size}",
+        )
+
+    def _pause_resume_experiment(self) -> None:
+        if self.controller.state == ExperimentState.RUNNING:
+            self.controller.pause()
+        elif self.controller.state == ExperimentState.PAUSED:
+            self.controller.resume()
+        self.experiment_panel.update_state(self.controller.state)
+
+    def _stop_experiment(self) -> None:
+        self.controller.stop()
+        self.experiment_panel.update_state(self.controller.state)
+        self._append_log("INFO", "EXPERIMENT", "Stopped by operator")
+
+    def _save_scenario(self) -> None:
+        self.scenario.experiment.duration_s = (
+            self.experiment_panel.duration_spin.value()
+        )
+        self.scenario.experiment.burst_size = (
+            self.experiment_panel.burst_spin.value()
+        )
+        try:
+            self.scenario.save(self.scenario_path)
+        except (OSError, ValueError) as exc:
+            self.simulator_control_panel.set_message(str(exc), error=True)
+            return
+        self.simulator_control_panel.set_message(
+            f"Saved {self.scenario_path.name}"
+        )
+
+    def _export_results(self, file_format: str) -> None:
+        output_directory = Path(__file__).resolve().parents[1] / "results"
+        output_directory.mkdir(exist_ok=True)
+        timestamp = datetime.now(timezone.utc).astimezone().strftime(
+            "%Y%m%d_%H%M%S"
+        )
+        output = output_directory / f"experiment_{timestamp}.{file_format}"
+        if file_format == "csv":
+            self.metrics.export_csv(output, self.transport.queue_depth)
+        else:
+            self.metrics.export_json(output, self.transport.queue_depth)
+        self._append_log("INFO", "EXPERIMENT", f"Exported {output}")
+
     # ------------------------------------------------------------------
     # Command panel
     # ------------------------------------------------------------------
@@ -404,93 +672,97 @@ class MainWindow(QMainWindow):
     def _send_command(self) -> None:
         command = self.command_combo.currentText()
         parameter = self.command_parameter.text().strip()
+        selected_packet = self.simulator_control_panel.selected_packet_name
 
-        self.simulator.simulate_command_sent()
+        try:
+            if command == "SIM_INJECT_CRC_ERROR":
+                self.controller.send_once(selected_packet, force_corrupt=True)
 
-        if command == "SIM_INJECT_CRC_ERROR":
-            self.simulator.inject_crc_error()
+            elif command == "SIM_INJECT_PACKET_DROP":
+                self.controller.send_once(selected_packet, force_drop=True)
 
-        elif command == "SIM_INJECT_PACKET_DROP":
-            self.simulator.inject_packet_drop()
+            elif command == "SIM_INJECT_LINK_LOSS":
+                self.transport.stop()
 
-        elif command == "SIM_INJECT_LINK_LOSS":
-            self.simulator.set_link_loss(True)
+            elif command == "SIM_INJECT_HIGH_TEMPERATURE":
+                self.source.set_value("RPI_STATUS", "cpu_temperature_c", 85.0)
 
-        elif command == "SIM_INJECT_HIGH_TEMPERATURE":
-            self.simulator.set_high_temperature(True)
+            elif command == "SIM_INJECT_LOW_VOLTAGE":
+                self.source.set_value(
+                    "SPACECRAFT_POWER", "spacecraft_bus_voltage_v", 4.2
+                )
 
-        elif command == "SIM_INJECT_LOW_VOLTAGE":
-            self.simulator.set_low_voltage(True)
+            elif command == "SIM_INJECT_CAN_ERROR":
+                self.source.set_value("CAN_STATUS", "status", CANStatus.ERROR)
 
-        elif command == "SIM_INJECT_CAN_ERROR":
-            self.simulator.set_can_error(True)
+            elif command == "SIM_INJECT_CAN_BUS_OFF":
+                self.source.set_value("CAN_STATUS", "status", CANStatus.BUS_OFF)
 
-        elif command == "SIM_INJECT_CAN_BUS_OFF":
-            self.simulator.set_can_bus_off(True)
+            elif command == "SIM_INJECT_WEAK_RADIO":
+                self.source.set_value("RADIO_STATUS", "rssi_dbm", -110.0)
+                self.source.set_value("RADIO_STATUS", "snr_db", 0.0)
 
-        elif command == "SIM_INJECT_WEAK_RADIO":
-            self.simulator.set_weak_radio_link(True)
+            elif command == "SIM_INJECT_SDR_OVERRUN":
+                current = self.source.get_value("SDR_STATUS", "overrun_count")
+                self.source.set_value(
+                    "SDR_STATUS", "overrun_count", int(current) + 1
+                )
 
-        elif command == "SIM_INJECT_SDR_OVERRUN":
-            self.simulator.set_sdr_overrun(True)
+            elif command == "SIM_RESET_FAULTS":
+                self.transport.start()
+                self._set_network_conditions(0.0, 0.0, 0.0, 0.0)
+                self.source.set_value("RPI_STATUS", "cpu_temperature_c", 48.0)
+                self.source.set_value(
+                    "SPACECRAFT_POWER", "spacecraft_bus_voltage_v", 5.0
+                )
+                self.source.set_value("CAN_STATUS", "status", CANStatus.UP)
+                self.source.set_value("RADIO_STATUS", "rssi_dbm", -67.0)
+                self.source.set_value("RADIO_STATUS", "snr_db", 12.0)
 
-        elif command == "SIM_RESET_FAULTS":
-            self.simulator.clear_faults()
-
-        elif command == "CAN_SEND_FRAME":
-            try:
+            elif command == "CAN_SEND_FRAME":
                 can_id = int(parameter, 0) if parameter else 0x100
-            except ValueError:
-                self._append_log(
-                    "ERROR",
-                    "COMMAND",
-                    f"Invalid CAN ID: {parameter}",
+                tx_count = self.source.get_value(
+                    "CAN_STATUS", "tx_frame_count"
                 )
-                return
-
-            self.simulator.simulate_can_transmit(can_id)
-
-        elif command == "RADIO_SET_FREQUENCY":
-            if not parameter:
-                self._append_log(
-                    "ERROR",
-                    "COMMAND",
-                    "RADIO_SET_FREQUENCY requires a frequency in Hz",
+                self.source.set_value(
+                    "CAN_STATUS", "tx_frame_count", int(tx_count) + 1
                 )
-                return
+                self.source.set_value("CAN_STATUS", "last_tx_id", can_id)
 
-            try:
-                self.simulator.radio_frequency_hz = int(parameter)
-            except ValueError:
-                self._append_log(
-                    "ERROR",
-                    "COMMAND",
-                    f"Invalid frequency: {parameter}",
+            elif command == "RADIO_SET_FREQUENCY":
+                if not parameter:
+                    raise ValueError(
+                        "RADIO_SET_FREQUENCY requires a frequency in Hz"
+                    )
+                self.source.set_value(
+                    "RADIO_STATUS", "frequency_hz", int(parameter)
                 )
-                return
 
-        elif command == "RADIO_ENABLE":
-            self.simulator.radio_state = RadioState.RX
+            elif command == "RADIO_ENABLE":
+                self.source.set_value("RADIO_STATUS", "state", RadioState.RX)
 
-        elif command == "RADIO_DISABLE":
-            self.simulator.radio_state = RadioState.OFF
+            elif command == "RADIO_DISABLE":
+                self.source.set_value("RADIO_STATUS", "state", RadioState.OFF)
 
-        elif command == "SDR_START_RX":
-            self.simulator.sdr_status = SDRStatus.RECEIVING
+            elif command == "SDR_START_RX":
+                self.source.set_value("SDR_STATUS", "status", SDRStatus.RECEIVING)
 
-        elif command == "SDR_STOP_RX":
-            self.simulator.sdr_status = SDRStatus.IDLE
+            elif command == "SDR_STOP_RX":
+                self.source.set_value("SDR_STATUS", "status", SDRStatus.IDLE)
 
-        elif command == "PING":
-            pass
+            elif command in {"PING", "REQUEST_STATUS"}:
+                self.controller.send_once(selected_packet)
 
-        elif command == "REQUEST_STATUS":
-            pass
+            elif command == "SET_MODE":
+                self.source.set_value(
+                    "SPACECRAFT_POWER",
+                    "obc_state",
+                    parameter.upper() if parameter else "NOMINAL",
+                )
 
-        elif command == "SET_MODE":
-            self.simulator.spacecraft_parameters["obc_state"] = (
-                parameter.upper() if parameter else "NOMINAL"
-            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            self._append_log("ERROR", "COMMAND", str(exc))
+            return
 
         suffix = f" parameter={parameter}" if parameter else ""
         self._append_log(
@@ -509,7 +781,7 @@ class MainWindow(QMainWindow):
         source: str,
         message: str,
     ) -> None:
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S")
         self.event_log.append(
             f"[{timestamp}] [{severity}] [{source}] {message}"
         )
