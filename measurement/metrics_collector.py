@@ -3,11 +3,26 @@ from __future__ import annotations
 import csv
 import json
 import time
-from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from collections.abc import Callable, Iterable
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from packet.parser import ParseResult
+
+EQUIPMENT_FAULT_NAMES = (
+    "SIM_INJECT_HIGH_TEMPERATURE",
+    "SIM_INJECT_LOW_VOLTAGE",
+    "SIM_INJECT_CAN_ERROR",
+    "SIM_INJECT_CAN_BUS_OFF",
+    "SIM_INJECT_WEAK_RADIO",
+    "SIM_INJECT_SDR_OVERRUN",
+)
+FAULT_NAMES = (
+    "SIM_INJECT_CRC_ERROR",
+    "SIM_INJECT_PACKET_DROP",
+    "SIM_INJECT_LINK_LOSS",
+    *EQUIPMENT_FAULT_NAMES,
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +44,9 @@ class MetricsSnapshot:
     maximum_packet_size: int
     average_delivery_delay_ms: float
     maximum_delivery_delay_ms: float
+    equipment_fault_packet_total: int = 0
+    fault_injections: dict[str, int] = field(default_factory=dict)
+    equipment_fault_packets: dict[str, int] = field(default_factory=dict)
 
 
 class MetricsCollector:
@@ -53,6 +71,11 @@ class MetricsCollector:
         self.parse_error_packets = 0
         self.packet_sizes: list[int] = []
         self.delivery_delays_ms: list[float] = []
+        self.fault_injections = {name: 0 for name in FAULT_NAMES}
+        self.equipment_fault_packet_total = 0
+        self.equipment_fault_packets = {
+            name: 0 for name in EQUIPMENT_FAULT_NAMES
+        }
 
     def start(self) -> None:
         self.reset()
@@ -107,6 +130,23 @@ class MetricsCollector:
         else:
             self.parse_error_packets += 1
 
+    def record_fault_injection(self, fault_name: str) -> None:
+        """Count a requested fault; this does not start the timing clock."""
+        if fault_name not in self.fault_injections:
+            raise ValueError(f"unknown fault: {fault_name}")
+        self.fault_injections[fault_name] += 1
+
+    def record_equipment_fault_packet(self, fault_names: Iterable[str]) -> None:
+        """Count one generated packet and each active equipment fault type."""
+        names = set(fault_names)
+        for name in names:
+            if name not in self.equipment_fault_packets:
+                raise ValueError(f"not an equipment fault: {name}")
+        if names:
+            self.equipment_fault_packet_total += 1
+        for name in names:
+            self.equipment_fault_packets[name] += 1
+
     def snapshot(self, queue_depth: int = 0) -> MetricsSnapshot:
         elapsed = self._elapsed_s()
         sizes = self.packet_sizes
@@ -131,6 +171,9 @@ class MetricsCollector:
                 sum(delays) / len(delays) if delays else 0.0
             ),
             maximum_delivery_delay_ms=max(delays) if delays else 0.0,
+            equipment_fault_packet_total=self.equipment_fault_packet_total,
+            fault_injections=dict(self.fault_injections),
+            equipment_fault_packets=dict(self.equipment_fault_packets),
         )
 
     def export_json(self, path: str | Path, queue_depth: int = 0) -> None:
@@ -141,6 +184,9 @@ class MetricsCollector:
 
     def export_csv(self, path: str | Path, queue_depth: int = 0) -> None:
         values = asdict(self.snapshot(queue_depth))
+        for group in ("fault_injections", "equipment_fault_packets"):
+            for name, count in values.pop(group).items():
+                values[f"{group}_{name.lower()}"] = count
         with Path(path).open("w", newline="", encoding="utf-8") as stream:
             writer = csv.DictWriter(stream, fieldnames=list(values))
             writer.writeheader()

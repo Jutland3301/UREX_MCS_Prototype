@@ -50,7 +50,10 @@ class ExperimentPanel(QWidget):
         }
         for name, label in self.metric_labels.items():
             value = values[name]
-            label.setText(formats.get(name, "{}").format(value))
+            if isinstance(value, dict):
+                label.setText(str(sum(value.values())))
+            else:
+                label.setText(formats.get(name, "{}").format(value))
 
     def _build_controls(self, duration_s: float, burst_size: int) -> QGroupBox:
         group = QGroupBox("Experiment Control")
@@ -97,6 +100,8 @@ class ExperimentPanel(QWidget):
             ("corrupted_packets", "Corrupted packets"),
             ("parse_ok_packets", "Parser OK"),
             ("parse_error_packets", "Parser errors"),
+            ("fault_injections", "Fault commands issued"),
+            ("equipment_fault_packet_total", "Equipment fault packets"),
             ("queue_depth", "Delayed queue depth"),
             ("packets_per_second", "Throughput"),
             ("bytes_per_second", "Byte rate"),

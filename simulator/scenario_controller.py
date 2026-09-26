@@ -27,8 +27,10 @@ class ScenarioController:
         transport: SimulatedTransport,
         metrics: MetricsCollector,
         monotonic: Callable[[], float] = time.monotonic,
+        before_encode: Callable[[str], None] | None = None,
     ) -> None:
         self.source = source
+        self.before_encode = before_encode
         self.encoder = encoder
         self.transport = transport
         self.metrics = metrics
@@ -92,7 +94,7 @@ class ScenarioController:
             else:
                 for packet_name in self.source.due_packet_names(now):
                     for _ in range(self.burst_size):
-                        self._submit(self.source.encode_once(packet_name, self.encoder))
+                        self._submit(self._encode_packet(packet_name))
         self.transport.poll(now)
 
     def send_once(
@@ -103,7 +105,7 @@ class ScenarioController:
         force_corrupt: bool = False,
         delay_override_ms: float | None = None,
     ) -> str:
-        raw = self.source.encode_once(packet_name, self.encoder)
+        raw = self._encode_packet(packet_name)
         result = self._submit(
             raw,
             force_drop=force_drop,
@@ -112,6 +114,11 @@ class ScenarioController:
         )
         self.transport.poll()
         return result
+
+    def _encode_packet(self, packet_name: str) -> bytes:
+        if self.before_encode is not None:
+            self.before_encode(packet_name)
+        return self.source.encode_once(packet_name, self.encoder)
 
     def send_raw_hex(self, text: str) -> str:
         raw = self.source.decode_raw_hex(text)

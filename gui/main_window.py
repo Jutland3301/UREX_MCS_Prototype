@@ -36,7 +36,7 @@ from packet.profiles import PROVISIONAL_PROFILE
 from simulator.manual_packet_source import ManualPacketSource
 from simulator.scenario_config import NetworkConditions, ScenarioConfig
 from simulator.scenario_controller import ExperimentState, ScenarioController
-
+from simulator.telemetry_simulator import TelemetrySimulator
 
 class MainWindow(QMainWindow):
     """
@@ -61,6 +61,10 @@ class MainWindow(QMainWindow):
         )
         self.scenario = ScenarioConfig.load(self.scenario_path)
         self.source = ManualPacketSource(self.profile, self.scenario)
+        self.telemetry_simulator = TelemetrySimulator()
+        self._active_fault_packets: set[str] = set()
+        self._active_fault_commands: dict[str, set[str]] = {}
+        self._fault_original_values: dict[tuple[str, str], object] = {}
         self.metrics = MetricsCollector()
         self.transport = SimulatedTransport(
             self.scenario.network,
@@ -71,6 +75,7 @@ class MainWindow(QMainWindow):
             self.encoder,
             self.transport,
             self.metrics,
+            before_encode=self._sync_simulated_faults,
         )
         self._last_alert_link_status: LinkStatus | None = None
         self._last_alert_can_status: CANStatus | None = None
@@ -304,6 +309,63 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Telemetry update
     # ------------------------------------------------------------------
+    def _activate_equipment_fault(self, command: str, packet_name: str) -> None:
+        affected_fields = {
+            "RPI_STATUS": ("cpu_temperature_c",),
+            "SPACECRAFT_POWER": ("spacecraft_bus_voltage_v",),
+            "CAN_STATUS": ("status", "error_count", "bus_off_count"),
+            "RADIO_STATUS": ("state", "rssi_dbm", "snr_db"),
+            "SDR_STATUS": ("overrun_count", "error_count"),
+        }
+        for field_name in affected_fields[packet_name]:
+            key = (packet_name, field_name)
+            if key not in self._fault_original_values:
+                self._fault_original_values[key] = self.source.get_value(*key)
+        self._active_fault_packets.add(packet_name)
+        self._active_fault_commands.setdefault(packet_name, set()).add(command)
+
+    def _sync_simulated_faults(self, packet_name: str) -> None:
+        """Apply only active equipment faults before encoding a packet."""
+        if packet_name not in self._active_fault_packets:
+            return
+
+        frame = self.telemetry_simulator.generate_frame()
+        if frame is None:
+            raise RuntimeError("telemetry simulator did not produce a frame")
+
+        if packet_name == "RPI_STATUS":
+            values = {"cpu_temperature_c": frame.raspberry.cpu_temperature_c}
+        elif packet_name == "SPACECRAFT_POWER":
+            values = {
+                "spacecraft_bus_voltage_v": frame.spacecraft.parameters[
+                    "spacecraft_bus_voltage_v"
+                ]
+            }
+        elif packet_name == "CAN_STATUS":
+            values = {
+                "status": frame.can.status,
+                "error_count": frame.can.error_count,
+                "bus_off_count": frame.can.bus_off_count,
+            }
+        elif packet_name == "RADIO_STATUS":
+            values = {
+                "state": frame.radio.state,
+                "rssi_dbm": frame.radio.rssi_dbm,
+                "snr_db": frame.radio.snr_db,
+            }
+        elif packet_name == "SDR_STATUS":
+            values = {
+                "overrun_count": frame.sdr.overrun_count,
+                "error_count": frame.sdr.error_count,
+            }
+        else:
+            return
+
+        for field_name, value in values.items():
+            self.source.set_value(packet_name, field_name, value)
+        self.metrics.record_equipment_fault_packet(
+            self._active_fault_commands.get(packet_name, ())
+        )
 
     def _experiment_tick(self) -> None:
         previous_state = self.controller.state
@@ -472,34 +534,14 @@ class MainWindow(QMainWindow):
         self.packet_table.insertRow(row)
 
         meta = result.packet.meta if result.packet is not None else None
-        header = result.header
-        message_type = meta.message_type.value if meta is not None else "-"
-        if meta is None and header is not None:
-            try:
-                message_type = self.profile.code_to_message_type(
-                    header.message_type_code
-                ).value
-            except KeyError:
-                message_type = f"UNKNOWN({header.message_type_code})"
-
+        # The framing header contains only magic, version and payload length.
+        # Sequence/source/type/packet ID exist only in decoded Protobuf metadata.
         values = [
             datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S"),
-            str(
-                meta.sequence_number
-                if meta is not None
-                else header.sequence_number if header is not None else "-"
-            ),
-            str(
-                meta.source_id
-                if meta is not None
-                else header.source_id if header is not None else "-"
-            ),
-            message_type,
-            (
-                f"0x{meta.packet_id:04X}"
-                if meta is not None
-                else f"0x{header.packet_id:04X}" if header is not None else "-"
-            ),
+            str(meta.sequence_number) if meta is not None else "-",
+            str(meta.source_id) if meta is not None else "-",
+            meta.message_type.value if meta is not None else "-",
+            f"0x{meta.packet_id:04X}" if meta is not None else "-",
             str(len(result.raw_packet)),
             result.application_crc_status.value,
             result.status.value,
@@ -554,6 +596,9 @@ class MainWindow(QMainWindow):
         except (RuntimeError, ValueError) as exc:
             self.simulator_control_panel.set_message(str(exc), error=True)
             return
+        key = (packet_name, field_name)
+        if key in self._fault_original_values:
+            self._fault_original_values[key] = converted
         self.simulator_control_panel.refresh_current_value()
         self.simulator_control_panel.set_message(
             f"Applied {packet_name}.{field_name}={converted}"
@@ -617,6 +662,9 @@ class MainWindow(QMainWindow):
     def _start_experiment(self, duration_s: float, burst_size: int) -> None:
         self.packet_table.setRowCount(0)
         self.controller.start(duration_s, burst_size)
+        for commands in self._active_fault_commands.values():
+            for command in commands:
+                self.metrics.record_fault_injection(command)
         self.experiment_panel.update_state(self.controller.state)
         self._append_log(
             "INFO",
@@ -682,87 +730,145 @@ class MainWindow(QMainWindow):
                 self.controller.send_once(selected_packet, force_drop=True)
 
             elif command == "SIM_INJECT_LINK_LOSS":
+                self.telemetry_simulator.set_link_loss(True)
+                # Stop the timed sender before stopping its transport; otherwise
+                # the next scheduler tick attempts to submit to a stopped link.
+                self.controller.stop()
+                self.experiment_panel.update_state(self.controller.state)
                 self.transport.stop()
 
             elif command == "SIM_INJECT_HIGH_TEMPERATURE":
-                self.source.set_value("RPI_STATUS", "cpu_temperature_c", 85.0)
+                self.telemetry_simulator.set_high_temperature(True)
+                self._activate_equipment_fault(command, "RPI_STATUS")
 
             elif command == "SIM_INJECT_LOW_VOLTAGE":
-                self.source.set_value(
-                    "SPACECRAFT_POWER", "spacecraft_bus_voltage_v", 4.2
-                )
+                self.telemetry_simulator.set_low_voltage(True)
+                self._activate_equipment_fault(command, "SPACECRAFT_POWER")
 
             elif command == "SIM_INJECT_CAN_ERROR":
-                self.source.set_value("CAN_STATUS", "status", CANStatus.ERROR)
+                self.telemetry_simulator.set_can_error(True)
+                self._activate_equipment_fault(command, "CAN_STATUS")
 
             elif command == "SIM_INJECT_CAN_BUS_OFF":
-                self.source.set_value("CAN_STATUS", "status", CANStatus.BUS_OFF)
+                self.telemetry_simulator.set_can_bus_off(True)
+                self._activate_equipment_fault(command, "CAN_STATUS")
 
             elif command == "SIM_INJECT_WEAK_RADIO":
-                self.source.set_value("RADIO_STATUS", "rssi_dbm", -110.0)
-                self.source.set_value("RADIO_STATUS", "snr_db", 0.0)
+                self.telemetry_simulator.set_weak_radio_link(True)
+                self._activate_equipment_fault(command, "RADIO_STATUS")
 
             elif command == "SIM_INJECT_SDR_OVERRUN":
-                current = self.source.get_value("SDR_STATUS", "overrun_count")
-                self.source.set_value(
-                    "SDR_STATUS", "overrun_count", int(current) + 1
-                )
+                self.telemetry_simulator.set_sdr_overrun(True)
+                self._activate_equipment_fault(command, "SDR_STATUS")
 
             elif command == "SIM_RESET_FAULTS":
+                self.telemetry_simulator.clear_faults()
+                for (packet_name, field_name), value in self._fault_original_values.items():
+                    self.source.set_value(packet_name, field_name, value)
+                self._fault_original_values.clear()
+                self._active_fault_packets.clear()
+                self._active_fault_commands.clear()
                 self.transport.start()
                 self._set_network_conditions(0.0, 0.0, 0.0, 0.0)
-                self.source.set_value("RPI_STATUS", "cpu_temperature_c", 48.0)
-                self.source.set_value(
-                    "SPACECRAFT_POWER", "spacecraft_bus_voltage_v", 5.0
+                self.telemetry_simulator.rpi_cpu_temperature_c = self.source.get_value(
+                    "RPI_STATUS", "cpu_temperature_c"
                 )
-                self.source.set_value("CAN_STATUS", "status", CANStatus.UP)
-                self.source.set_value("RADIO_STATUS", "rssi_dbm", -67.0)
-                self.source.set_value("RADIO_STATUS", "snr_db", 12.0)
+                self.telemetry_simulator.spacecraft_parameters[
+                    "spacecraft_bus_voltage_v"
+                ] = self.source.get_value(
+                    "SPACECRAFT_POWER", "spacecraft_bus_voltage_v"
+                )
+                self.telemetry_simulator.can_status = self.source.get_value(
+                    "CAN_STATUS", "status"
+                )
+                self.telemetry_simulator.can_error_count = self.source.get_value(
+                    "CAN_STATUS", "error_count"
+                )
+                self.telemetry_simulator.can_bus_off_count = self.source.get_value(
+                    "CAN_STATUS", "bus_off_count"
+                )
+                self.telemetry_simulator.radio_rssi_dbm = self.source.get_value(
+                    "RADIO_STATUS", "rssi_dbm"
+                )
+                self.telemetry_simulator.radio_snr_db = self.source.get_value(
+                    "RADIO_STATUS", "snr_db"
+                )
+                self.telemetry_simulator.radio_state = self.source.get_value(
+                    "RADIO_STATUS", "state"
+                )
+                self.telemetry_simulator.sdr_overrun_count = self.source.get_value(
+                    "SDR_STATUS", "overrun_count"
+                )
+                self.telemetry_simulator.sdr_error_count = self.source.get_value(
+                    "SDR_STATUS", "error_count"
+                )
+                self.telemetry_simulator.sdr_status = self.source.get_value(
+                    "SDR_STATUS", "status"
+                )
+                self.simulator_control_panel.refresh_current_value()
 
             elif command == "CAN_SEND_FRAME":
                 can_id = int(parameter, 0) if parameter else 0x100
-                tx_count = self.source.get_value(
-                    "CAN_STATUS", "tx_frame_count"
-                )
-                self.source.set_value(
-                    "CAN_STATUS", "tx_frame_count", int(tx_count) + 1
-                )
                 self.source.set_value("CAN_STATUS", "last_tx_id", can_id)
+                self.telemetry_simulator.can_tx_frame_count = int(
+                    self.source.get_value("CAN_STATUS", "tx_frame_count")
+                )
+                self.telemetry_simulator.simulate_can_transmit(can_id)
+                self.source.set_value(
+                    "CAN_STATUS", "tx_frame_count",
+                    self.telemetry_simulator.can_tx_frame_count,
+                )
 
             elif command == "RADIO_SET_FREQUENCY":
                 if not parameter:
                     raise ValueError(
                         "RADIO_SET_FREQUENCY requires a frequency in Hz"
                     )
+                frequency_hz = int(parameter)
                 self.source.set_value(
-                    "RADIO_STATUS", "frequency_hz", int(parameter)
+                    "RADIO_STATUS", "frequency_hz", frequency_hz
                 )
+                self.telemetry_simulator.radio_frequency_hz = frequency_hz
 
             elif command == "RADIO_ENABLE":
                 self.source.set_value("RADIO_STATUS", "state", RadioState.RX)
+                self.telemetry_simulator.radio_state = RadioState.RX
+                if ("RADIO_STATUS", "state") in self._fault_original_values:
+                    self._fault_original_values[("RADIO_STATUS", "state")] = RadioState.RX
 
             elif command == "RADIO_DISABLE":
                 self.source.set_value("RADIO_STATUS", "state", RadioState.OFF)
+                self.telemetry_simulator.radio_state = RadioState.OFF
+                if ("RADIO_STATUS", "state") in self._fault_original_values:
+                    self._fault_original_values[("RADIO_STATUS", "state")] = RadioState.OFF
 
             elif command == "SDR_START_RX":
                 self.source.set_value("SDR_STATUS", "status", SDRStatus.RECEIVING)
+                self.telemetry_simulator.sdr_status = SDRStatus.RECEIVING
 
             elif command == "SDR_STOP_RX":
                 self.source.set_value("SDR_STATUS", "status", SDRStatus.IDLE)
+                self.telemetry_simulator.sdr_status = SDRStatus.IDLE
 
             elif command in {"PING", "REQUEST_STATUS"}:
                 self.controller.send_once(selected_packet)
 
             elif command == "SET_MODE":
-                self.source.set_value(
+                mode = self.source.set_value(
                     "SPACECRAFT_POWER",
                     "obc_state",
                     parameter.upper() if parameter else "NOMINAL",
                 )
+                self.telemetry_simulator.spacecraft_parameters["obc_state"] = mode
 
         except (RuntimeError, TypeError, ValueError) as exc:
             self._append_log("ERROR", "COMMAND", str(exc))
             return
+
+        if command.startswith("SIM_INJECT_"):
+            self.metrics.record_fault_injection(command)
+        if not command.startswith("SIM_"):
+            self.telemetry_simulator.simulate_command_sent()
 
         suffix = f" parameter={parameter}" if parameter else ""
         self._append_log(

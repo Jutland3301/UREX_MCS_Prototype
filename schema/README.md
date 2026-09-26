@@ -20,6 +20,32 @@ For a plain-C embedded target, use a `.proto` compatible C generator such as
 nanopb or protobuf-c against the same `schema/urex.proto`; do not duplicate the
 packet structure manually in C.
 
+## Generating bindings on Windows
+
+Install the development dependencies from the project root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+```
+
+Generate Python and C++ bindings with protoc 33.5 available on PATH:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\generate_protobuf.py --cpp-out generated\cpp
+```
+
+Generate plain-C bindings from the same schema with nanopb:
+
+```powershell
+New-Item -ItemType Directory -Force generated\c | Out-Null
+.\.venv\Scripts\nanopb_generator.exe -I schema -D generated\c schema\urex.proto
+```
+
+The generated C++ files require a compatible C++ Protobuf runtime. The
+generated C files require nanopb's `pb_common.c`, `pb_encode.c`, and
+`pb_decode.c`. Generated bindings encode the Protobuf body only; each
+implementation must also handle the UREX frame and CRC.
+
 ## Hardware frame around Protobuf
 
 Each transport message contains exactly one frame:
