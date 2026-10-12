@@ -1,0 +1,143 @@
+syntax = "proto3";
+
+package urex;
+
+// UREX v0.3.b packet schema.
+// This file is the language-neutral packet contract. Generate bindings for
+// Python/C++/other supported targets rather than hand-writing serializers.
+
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+  TELEMETRY = 1;
+  EVENT = 2;
+  WARNING = 3;
+  ERROR = 4;
+  COMMAND = 5;
+  ACK = 6;
+  NACK = 7;
+  HEARTBEAT = 8;
+  RAW = 9;
+}
+
+message RpiStatus {
+  enum ProcessStatus {
+    PROCESS_STATUS_UNSPECIFIED = 0;
+    STARTING = 1;
+    RUNNING = 2;
+    DEGRADED = 3;
+    ERROR = 4;
+    STOPPED = 5;
+  }
+
+  float uptime_s = 1;
+  optional float cpu_temperature_c = 2;
+  optional float cpu_usage_percent = 3;
+  optional float memory_usage_percent = 4;
+  optional float disk_usage_percent = 5;
+  ProcessStatus process_status = 6;
+  uint32 restart_count = 7;
+  uint32 error_count = 8;
+}
+
+message RadioStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    OFF = 1;
+    IDLE = 2;
+    RX = 3;
+    TX = 4;
+    ERROR = 5;
+    UNKNOWN = 6;
+  }
+
+  State state = 1;
+  optional uint32 frequency_hz = 2;
+  optional float rssi_dbm = 3;
+  optional float snr_db = 4;
+  optional float tx_power_dbm = 5;
+  optional uint32 bitrate_bps = 6;
+  optional uint32 channel_id = 7;
+  uint32 rx_packet_count = 8;
+  uint32 tx_packet_count = 9;
+  uint32 rx_error_count = 10;
+  uint32 packet_loss_count = 11;
+  optional float pa_temperature_c = 12;
+  optional bool lock_status = 13;
+}
+
+message SdrStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    OFFLINE = 1;
+    IDLE = 2;
+    RECEIVING = 3;
+    TRANSMITTING = 4;
+    ERROR = 5;
+  }
+
+  State status = 1;
+  optional uint32 center_frequency_hz = 2;
+  optional uint32 sample_rate_sps = 3;
+  optional uint32 bandwidth_hz = 4;
+  optional float gain_db = 5;
+  uint64 rx_sample_count = 6;
+  uint32 overrun_count = 7;
+  uint32 underrun_count = 8;
+  uint32 error_count = 9;
+}
+
+message CanStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    UP = 1;
+    DOWN = 2;
+    ERROR = 3;
+    BUS_OFF = 4;
+    UNKNOWN = 5;
+  }
+
+  State status = 1;
+  optional uint32 bitrate_bps = 2;
+  uint32 rx_frame_count = 3;
+  uint32 tx_frame_count = 4;
+  uint32 error_count = 5;
+  uint32 bus_off_count = 6;
+  optional uint32 last_rx_id = 7;
+  optional uint32 last_tx_id = 8;
+}
+
+message SpacecraftPower {
+  enum ObcState {
+    OBC_STATE_UNSPECIFIED = 0;
+    NOMINAL = 1;
+    SAFE = 2;
+    RECOVERY = 3;
+    ERROR = 4;
+  }
+
+  optional float spacecraft_bus_voltage_v = 1;
+  optional float spacecraft_bus_current_a = 2;
+  optional float battery_temperature_c = 3;
+  optional float battery_state_of_charge_percent = 4;
+  ObcState obc_state = 5;
+}
+
+message UrexPacket {
+  uint32 protocol_version = 1;
+  MessageType message_type = 2;
+  uint32 source_id = 3;
+  uint32 destination_id = 4;
+  uint32 flags = 5;
+  uint32 sequence_number = 6;
+  uint64 timestamp_ms = 7;
+
+  // The oneof field numbers deliberately equal the existing UREX packet IDs.
+  // This keeps a single authoritative numeric identifier in the schema.
+  oneof payload {
+    RpiStatus rpi_status = 257;               // 0x0101
+    RadioStatus radio_status = 513;           // 0x0201
+    SdrStatus sdr_status = 769;               // 0x0301
+    CanStatus can_status = 1025;              // 0x0401
+    SpacecraftPower spacecraft_power = 1281;  // 0x0501
+  }
+}

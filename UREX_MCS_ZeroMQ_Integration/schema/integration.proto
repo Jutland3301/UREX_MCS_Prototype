@@ -1,0 +1,70 @@
+syntax = "proto3";
+package urex.integration.v1;
+
+message IntegrationPacket {
+  uint32 schema_version = 1;   // Must be 1.
+  string session_id = 2;       // UUID string, new for each sender process start.
+  uint64 sequence = 3;         // Starts at 1; increases across all sender messages.
+  uint64 timestamp_unix_ms = 4;// Sender event time, UTC Unix milliseconds.
+  oneof body {
+    TransmitRequest transmit_request = 10;
+    CommandResult command_result = 11;
+    RadioReceive radio_receive = 12;
+    Status status = 13;
+  }
+}
+
+message TransmitRequest {
+  string command_id = 1;       // UUID string; stable for the same logical request.
+  bytes payload = 2;
+}
+
+enum CommandState {
+  COMMAND_STATE_UNSPECIFIED = 0;
+  ACCEPTED = 1;
+  TX_COMPLETED = 2;
+  FAILED = 3;
+  REJECTED = 4;
+}
+message CommandResult {
+  string command_id = 1;
+  CommandState state = 2;
+  string error_code = 3;       // Empty on success; stable machine-readable code.
+  string error_message = 4;    // Human-readable explanation.
+}
+
+message RadioReceive {
+  bytes payload = 1;
+  optional float rssi_dbm = 2;
+  optional float snr_db = 3;
+  optional bool radio_crc_ok = 4;
+}
+
+enum Component {
+  COMPONENT_UNSPECIFIED = 0;
+  PI = 1;
+  RADIO = 2;
+  SDR = 3;
+  CAN = 4;
+  SPACECRAFT = 5;
+}
+enum Health {
+  HEALTH_UNSPECIFIED = 0;
+  INITIALIZING = 1;
+  READY = 2;
+  DEGRADED = 3;
+  ERROR = 4;
+  UNAVAILABLE = 5;
+}
+message ComponentStatus {
+  Component component = 1;
+  Health health = 2;
+  string error_code = 3;
+  string error_message = 4;
+  string configuration_summary = 5;
+}
+message Status {
+  repeated ComponentStatus components = 1;
+  uint32 max_tx_payload_bytes = 2; // Effective hardware-path limit, excluding UX envelope.
+  bool clock_synchronized = 3;
+}

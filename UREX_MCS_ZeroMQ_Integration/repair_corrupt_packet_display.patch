@@ -1,0 +1,43 @@
+--- a/gui/main_window.py
++++ b/gui/main_window.py
+@@ -534,34 +534,14 @@
+         self.packet_table.insertRow(row)
+ 
+         meta = result.packet.meta if result.packet is not None else None
+-        header = result.header
+-        message_type = meta.message_type.value if meta is not None else "-"
+-        if meta is None and header is not None:
+-            try:
+-                message_type = self.profile.code_to_message_type(
+-                    header.message_type_code
+-                ).value
+-            except KeyError:
+-                message_type = f"UNKNOWN({header.message_type_code})"
+-
++        # The framing header contains only magic, version and payload length.
++        # Sequence/source/type/packet ID exist only in decoded Protobuf metadata.
+         values = [
+             datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S"),
+-            str(
+-                meta.sequence_number
+-                if meta is not None
+-                else header.sequence_number if header is not None else "-"
+-            ),
+-            str(
+-                meta.source_id
+-                if meta is not None
+-                else header.source_id if header is not None else "-"
+-            ),
+-            message_type,
+-            (
+-                f"0x{meta.packet_id:04X}"
+-                if meta is not None
+-                else f"0x{header.packet_id:04X}" if header is not None else "-"
+-            ),
++            str(meta.sequence_number) if meta is not None else "-",
++            str(meta.source_id) if meta is not None else "-",
++            meta.message_type.value if meta is not None else "-",
++            f"0x{meta.packet_id:04X}" if meta is not None else "-",
+             str(len(result.raw_packet)),
+             result.application_crc_status.value,
+             result.status.value,

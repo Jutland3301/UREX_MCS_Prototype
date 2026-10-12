@@ -1,0 +1,134 @@
+--- a/gui/main_window.py
++++ b/gui/main_window.py
+@@ -64,7 +64,7 @@
+         self.telemetry_simulator = TelemetrySimulator()
+         self._active_fault_packets: set[str] = set()
+         self._active_fault_commands: dict[str, set[str]] = {}
+-        self._radio_state_before_weak_fault: RadioState | None = None
++        self._fault_original_values: dict[tuple[str, str], object] = {}
+         self.metrics = MetricsCollector()
+         self.transport = SimulatedTransport(
+             self.scenario.network,
+@@ -310,6 +310,17 @@
+     # Telemetry update
+     # ------------------------------------------------------------------
+     def _activate_equipment_fault(self, command: str, packet_name: str) -> None:
++        affected_fields = {
++            "RPI_STATUS": ("cpu_temperature_c",),
++            "SPACECRAFT_POWER": ("spacecraft_bus_voltage_v",),
++            "CAN_STATUS": ("status", "error_count", "bus_off_count"),
++            "RADIO_STATUS": ("state", "rssi_dbm", "snr_db"),
++            "SDR_STATUS": ("overrun_count", "error_count"),
++        }
++        for field_name in affected_fields[packet_name]:
++            key = (packet_name, field_name)
++            if key not in self._fault_original_values:
++                self._fault_original_values[key] = self.source.get_value(*key)
+         self._active_fault_packets.add(packet_name)
+         self._active_fault_commands.setdefault(packet_name, set()).add(command)
+ 
+@@ -605,6 +616,9 @@
+         except (RuntimeError, ValueError) as exc:
+             self.simulator_control_panel.set_message(str(exc), error=True)
+             return
++        key = (packet_name, field_name)
++        if key in self._fault_original_values:
++            self._fault_original_values[key] = converted
+         self.simulator_control_panel.refresh_current_value()
+         self.simulator_control_panel.set_message(
+             f"Applied {packet_name}.{field_name}={converted}"
+@@ -756,10 +770,6 @@
+                 self._activate_equipment_fault(command, "CAN_STATUS")
+ 
+             elif command == "SIM_INJECT_WEAK_RADIO":
+-                if "RADIO_STATUS" not in self._active_fault_packets:
+-                    self._radio_state_before_weak_fault = self.source.get_value(
+-                        "RADIO_STATUS", "state"
+-                    )
+                 self.telemetry_simulator.set_weak_radio_link(True)
+                 self._activate_equipment_fault(command, "RADIO_STATUS")
+ 
+@@ -769,34 +779,49 @@
+ 
+             elif command == "SIM_RESET_FAULTS":
+                 self.telemetry_simulator.clear_faults()
++                for (packet_name, field_name), value in self._fault_original_values.items():
++                    self.source.set_value(packet_name, field_name, value)
++                self._fault_original_values.clear()
+                 self._active_fault_packets.clear()
+                 self._active_fault_commands.clear()
+                 self.transport.start()
+                 self._set_network_conditions(0.0, 0.0, 0.0, 0.0)
+-                self.source.set_value("RPI_STATUS", "cpu_temperature_c", 48.0)
+-                self.telemetry_simulator.rpi_cpu_temperature_c = 48.0
+-                self.source.set_value(
+-                    "SPACECRAFT_POWER", "spacecraft_bus_voltage_v", 5.0
++                self.telemetry_simulator.rpi_cpu_temperature_c = self.source.get_value(
++                    "RPI_STATUS", "cpu_temperature_c"
+                 )
+                 self.telemetry_simulator.spacecraft_parameters[
+                     "spacecraft_bus_voltage_v"
+-                ] = 5.0
+-                self.source.set_value("CAN_STATUS", "status", CANStatus.UP)
+-                self.source.set_value("RADIO_STATUS", "rssi_dbm", -67.0)
+-                self.source.set_value("RADIO_STATUS", "snr_db", 12.0)
+-                self.telemetry_simulator.radio_rssi_dbm = -67.0
+-                self.telemetry_simulator.radio_snr_db = 12.0
+-                if self._radio_state_before_weak_fault is not None:
+-                    self.source.set_value(
+-                        "RADIO_STATUS", "state", self._radio_state_before_weak_fault
+-                    )
+-                    self._radio_state_before_weak_fault = None
++                ] = self.source.get_value(
++                    "SPACECRAFT_POWER", "spacecraft_bus_voltage_v"
++                )
++                self.telemetry_simulator.can_status = self.source.get_value(
++                    "CAN_STATUS", "status"
++                )
++                self.telemetry_simulator.can_error_count = self.source.get_value(
++                    "CAN_STATUS", "error_count"
++                )
++                self.telemetry_simulator.can_bus_off_count = self.source.get_value(
++                    "CAN_STATUS", "bus_off_count"
++                )
++                self.telemetry_simulator.radio_rssi_dbm = self.source.get_value(
++                    "RADIO_STATUS", "rssi_dbm"
++                )
++                self.telemetry_simulator.radio_snr_db = self.source.get_value(
++                    "RADIO_STATUS", "snr_db"
++                )
+                 self.telemetry_simulator.radio_state = self.source.get_value(
+                     "RADIO_STATUS", "state"
+                 )
++                self.telemetry_simulator.sdr_overrun_count = self.source.get_value(
++                    "SDR_STATUS", "overrun_count"
++                )
++                self.telemetry_simulator.sdr_error_count = self.source.get_value(
++                    "SDR_STATUS", "error_count"
++                )
+                 self.telemetry_simulator.sdr_status = self.source.get_value(
+                     "SDR_STATUS", "status"
+                 )
++                self.simulator_control_panel.refresh_current_value()
+ 
+             elif command == "CAN_SEND_FRAME":
+                 can_id = int(parameter, 0) if parameter else 0x100
+@@ -824,14 +849,14 @@
+             elif command == "RADIO_ENABLE":
+                 self.source.set_value("RADIO_STATUS", "state", RadioState.RX)
+                 self.telemetry_simulator.radio_state = RadioState.RX
+-                if "RADIO_STATUS" in self._active_fault_packets:
+-                    self._radio_state_before_weak_fault = RadioState.RX
++                if ("RADIO_STATUS", "state") in self._fault_original_values:
++                    self._fault_original_values[("RADIO_STATUS", "state")] = RadioState.RX
+ 
+             elif command == "RADIO_DISABLE":
+                 self.source.set_value("RADIO_STATUS", "state", RadioState.OFF)
+                 self.telemetry_simulator.radio_state = RadioState.OFF
+-                if "RADIO_STATUS" in self._active_fault_packets:
+-                    self._radio_state_before_weak_fault = RadioState.OFF
++                if ("RADIO_STATUS", "state") in self._fault_original_values:
++                    self._fault_original_values[("RADIO_STATUS", "state")] = RadioState.OFF
+ 
+             elif command == "SDR_START_RX":
+                 self.source.set_value("SDR_STATUS", "status", SDRStatus.RECEIVING)

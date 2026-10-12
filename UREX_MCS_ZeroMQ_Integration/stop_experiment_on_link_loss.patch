@@ -1,0 +1,13 @@
+--- a/gui/main_window.py
++++ b/gui/main_window.py
+@@ -731,6 +731,10 @@
+ 
+             elif command == "SIM_INJECT_LINK_LOSS":
+                 self.telemetry_simulator.set_link_loss(True)
++                # Stop the timed sender before stopping its transport; otherwise
++                # the next scheduler tick attempts to submit to a stopped link.
++                self.controller.stop()
++                self.experiment_panel.update_state(self.controller.state)
+                 self.transport.stop()
+ 
+             elif command == "SIM_INJECT_HIGH_TEMPERATURE":
