@@ -2,7 +2,7 @@
 
 ## 完成している部分と実機への接続口
 
-このブランチには、4タイプのProtobuf、UX＋CRC codec、ZeroMQ通信、MCS画面、コマンド追跡、CSV/JSONLログ、Python模擬Pi、C++ Piネットワークサービスが入っています。MQTT実装・比較ベンチマークは含みません。通常の `python main.py` は既存シミュレータを起動し、`--network` はPiからの情報だけを扱う画面を起動します。
+このブランチには、4タイプのProtobuf、UX＋CRC codec、ZeroMQ通信、MCS画面、コマンド追跡、SQLite/JSONLログ、Python模擬Pi、C++ Piネットワークサービスが入っています。自動計測用のMQTT/ZeroMQ比較は `evidence_suite` に追加されています。通常の `python main.py` は既存シミュレータを起動し、`--network` はPiからの情報だけを扱う画面を起動します。
 
 **実機接続は未実施です。** Patrick/YuchengのC++コードをまだ受領していないため、RadioLib・SPI/GPIO・UARTを操作するコードは追加していません。C++ `Backend` の4メソッドが実機との接続口です。模擬Piの成功・RSSI/SNR・echoは合成値で、実機の動作確認ではありません。
 
@@ -47,9 +47,9 @@ python3 -m integration.mock_pi --mode fail
 python3 -m integration.mock_pi --mode timeout
 ```
 
-failはFAILED、timeoutはACCEPTED後10秒でOUTCOME_UNKNOWNになります。自動再送はしません。模擬Piを停止すると最後のStatusから3秒でSTALEになり、送信ボタンが無効になります。再起動後は新sessionを検出し、未決コマンドを結果不明として残します。
+failはFAILED、timeoutはACCEPTED後3秒でOUTCOME_UNKNOWNになります。自動再送はしません。模擬Piを停止すると最後のStatusから3秒でSTALEになり、送信ボタンが無効になります。再起動後は新sessionを検出し、未決コマンドを結果不明として残します。
 
-MCSログは `logs/mcs` のCSVとJSONL（1行1JSON）。RX行にはPiイベント時刻とMCS側の受信時刻、payload hex、RSSI/SNRが入ります。未取得のRSSI/SNRは空欄です。`--log-dir` で保存先を変更できます。
+MCSログは `logs/mcs` のSQLite DBとJSONL（1行1JSON）。RX行にはPiイベント時刻とMCS側の受信時刻、payload hex、RSSI/SNRが入ります。未取得のRSSI/SNRは空欄です。`--log-dir` で保存先を変更できます。
 
 ## 2. C++側のネットワークサービスを確認する
 
@@ -104,3 +104,7 @@ RX時刻はPiがhardware interfaceから完全なpayloadを取得したUTC Unix�
 最後に同じcommand IDの重複要求で無線送信が増えないこと、payload上限超過、初期化失敗、ネットワーク切断、Pi再起動を確認します。無線全二重動作の成功はネットワークの成功とは別に測定します。模擬Piのecho、MCSが受信したcommand result、ZeroMQの接続成功を、宇宙機受信の証拠にしないでください。
 
 仕様の詳細とshared HEX test vectorは [MCS_PI_INTERFACE.md](MCS_PI_INTERFACE.md)、schemaは `schema/integration.proto` にあります。
+
+## 自動計測
+
+H1/H2/H3の自動試験・Piログ回収は [EVIDENCE_RUNBOOK.md](EVIDENCE_RUNBOOK.md) を参照。

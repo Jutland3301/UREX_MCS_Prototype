@@ -1,0 +1,45 @@
+{
+  "pi_url": "http://CHANGE_ME_PI_IP:8765",
+  "token": "CHANGE_ME_SHARED_TOKEN",
+  "mcs_host": "CHANGE_ME_PC_IP",
+  "mcs_bind": "tcp://*:5557",
+  "mcs_port": 5557,
+  "timeout_s": 8,
+  "h1": {
+    "repeats": 3,
+    "phases": [
+      {
+        "name": "passive",
+        "duration_s": 30,
+        "command_hz": 0
+      },
+      {
+        "name": "concurrent",
+        "duration_s": 30,
+        "command_hz": 1
+      }
+    ]
+  },
+  "h2": {
+    "repeats": 3,
+    "duration_s": 15,
+    "rate_hz": 100,
+    "payload_bytes": 128,
+    "outage_s": 2,
+    "drain_s": 3,
+    "profiles": [
+      {
+        "rate_hz": 10,
+        "payload_bytes": 64
+      },
+      {
+        "rate_hz": 100,
+        "payload_bytes": 512
+      }
+    ]
+  },
+  "h3": {
+    "repeats": 3,
+    "steps": []
+  }
+}

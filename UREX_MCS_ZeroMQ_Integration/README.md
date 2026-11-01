@@ -1,7 +1,7 @@
 ## ZeroMQ integration branch
 
 This branch adds the network interface on top of the v1.0 simulator. It includes
-four integration messages, a network monitor with CSV/JSONL logs, Python/C++ mock
+four integration messages, a network monitor with SQLite/JSONL logs, Python/C++ mock
 Pi services, and a reusable C++ network service. Native RadioLib/TX/RX worker
 integration is pending receipt of the hardware team's source. No MQTT comparison
 or benchmark code is included.
@@ -69,3 +69,8 @@ py -3 scripts/generate_protobuf.py
 ~~~
 
 C++ and nanopb bindings can also be generated when the corresponding Protocol Buffers tools are installed.
+
+## Automated H1/H2/H3 evidence collection
+
+See [EVIDENCE_RUNBOOK.md](docs/EVIDENCE_RUNBOOK.md). Run the PC and Pi entry points
+from **this directory**, not the legacy simulator at repository root.

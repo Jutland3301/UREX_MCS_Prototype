@@ -222,3 +222,8 @@ __marimo__/
 results/
 logs/
 pi_service/build/
+
+evidence-plan.local.json
+evidence-results/
+evidence-pi/
+evidence-selftest/

@@ -16,10 +16,12 @@ from packet.generated import integration_pb2 as pb
 
 
 class EventLog:
-    """Append each valid event to JSONL and CSV; unknown measurements stay blank."""
-    FIELDS = ("local_time_unix_ms", "direction", "kind", "session_id", "sequence",
+    """Append events to SQLite and JSONL; absent DB values use NULL."""
+    FIELDS = ("run_id", "local_time_unix_ms", "direction", "kind", "session_id", "sequence",
               "event_time_unix_ms", "command_id", "state", "payload_hex",
-              "rssi_dbm", "snr_db", "modem_config_summary", "config_state_time_unix_ms", "config_status_sequence", "error_code", "detail_json")
+              "rssi_dbm", "snr_db", "modem_config_summary",
+              "config_status_time_unix_ms", "config_status_sequence",
+              "error_code", "detail_json")
 
     def __init__(self, directory: str | Path | None = None):
         self.rows = []
@@ -28,44 +30,31 @@ class EventLog:
         self._config_time = ""
         self._config_summary = ""
         self._json = self._db = None
-
         if directory is not None:
             directory = Path(directory)
             directory.mkdir(parents=True, exist_ok=True)
             basename = f"integration-{time.time_ns()}"
-
-            self._json = (directory / f"{basename}.jsonl").open(
-                "w", encoding="utf-8")
+            self._json = (directory / f"{basename}.jsonl").open("w", encoding="utf-8")
             self._db = sqlite3.connect(directory / f"{basename}.db")
-
-            integer_fields = {
-                "local_time_unix_ms", "sequence", "event_time_unix_ms",
-                "config_status_time_unix_ms", "config_status_sequence"
-            }
+            integer_fields = {"local_time_unix_ms", "sequence", "event_time_unix_ms",
+                              "config_status_time_unix_ms", "config_status_sequence"}
             columns = ", ".join(
-                f"{name} " + (
-                    "INTEGER" if name in integer_fields else
-                    "REAL" if name in {"rssi_dbm", "snr_db"} else "TEXT"
-                )
-                for name in self.FIELDS
-            )
-
+                f"{name} " + ("INTEGER" if name in integer_fields else
+                              "REAL" if name in {"rssi_dbm", "snr_db"} else "TEXT")
+                for name in self.FIELDS)
             with self._db:
                 self._db.execute(
                     f"CREATE TABLE events (id INTEGER PRIMARY KEY, {columns})")
                 for name in ("local_time_unix_ms", "command_id", "kind"):
-                    self._db.execute(
-                        f"CREATE INDEX idx_events_{name} ON events ({name})")
-
+                    self._db.execute(f"CREATE INDEX idx_events_{name} ON events ({name})")
             placeholders = ", ".join("?" for _ in self.FIELDS)
             self._insert_sql = (
-                f"INSERT INTO events ({', '.join(self.FIELDS)}) "
-                f"VALUES ({placeholders})"
-            )
+                f"INSERT INTO events ({', '.join(self.FIELDS)}) VALUES ({placeholders})")
 
     def record(self, kind: str, *, direction: str = "LOCAL", packet=None, detail=""):
         row = dict.fromkeys(self.FIELDS, "")
-        row.update(local_time_unix_ms=time.time_ns() // 1_000_000, direction=direction,
+        row.update(run_id=getattr(self, "run_id", ""),
+                   local_time_unix_ms=time.time_ns() // 1_000_000, direction=direction,
                    kind=kind, detail_json=json.dumps(detail, ensure_ascii=False))
         if packet is not None:
             body = getattr(packet, packet.WhichOneof("body"))
@@ -82,8 +71,7 @@ class EventLog:
             for field in ("rssi_dbm", "snr_db"):
                 if hasattr(body, field) and body.HasField(field):
                     row[field] = getattr(body, field)
-                    kind_name = packet.WhichOneof("body")
-
+            kind_name = packet.WhichOneof("body")
             if kind_name == "status":
                 if (packet.session_id != self._config_session
                         or packet.sequence > self._config_sequence):
@@ -93,36 +81,30 @@ class EventLog:
                     self._config_summary = next(
                         (c.configuration_summary for c in body.components
                          if c.component == pb.RADIO), "")
-
             if (kind_name == "radio_receive"
                     and packet.session_id == self._config_session
                     and packet.sequence > self._config_sequence):
-                row.update(
-                    modem_config_summary=self._config_summary,
-                    config_status_time_unix_ms=self._config_time,
-                    config_status_sequence=self._config_sequence)
+                row.update(modem_config_summary=self._config_summary,
+                           config_status_time_unix_ms=self._config_time,
+                           config_status_sequence=self._config_sequence)
         self.rows.append(row)
         del self.rows[:-1000]
-
         if self._db is not None:
-            values = [
-                None if row[name] == "" else row[name]
-                for name in self.FIELDS
-            ]
+            values = [None if row[name] == "" else row[name] for name in self.FIELDS]
             with self._db:
                 self._db.execute(self._insert_sql, values)
-
         if self._json is not None:
             self._json.write(json.dumps(row, ensure_ascii=False) + "\n")
             self._json.flush()
-
         return row
 
     def close(self):
         if self._json is not None:
             self._json.close()
-            self._csv.close()
-            self._json = self._csv = None
+            self._json = None
+        if self._db is not None:
+            self._db.close()
+            self._db = None
 
 
 @dataclass
@@ -354,10 +336,5 @@ class PiEngine:
                 del self.cache[command_id]
 
     def close(self):
-        if self._json is not None:
-            self._json.close()
-            self._json = None
-
-        if self._db is not None:
-            self._db.close()
-            self._db = None
+        self.transport.stop()
+        self.log.close()

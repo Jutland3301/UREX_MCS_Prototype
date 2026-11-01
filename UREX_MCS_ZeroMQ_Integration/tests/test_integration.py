@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import csv
+import sqlite3
 import json
 import os
 import subprocess
@@ -152,8 +152,41 @@ def test_mcs_timeout_restart_dedupe_and_blank_logs(tmp_path):
     rows = [json.loads(x) for x in next(tmp_path.glob("*.jsonl")).read_text().splitlines()]
     row = next(r for r in rows if r["kind"] == "radio_receive")
     assert row["payload_hex"] == "000aff" and row["rssi_dbm"] == "" and row["snr_db"] == ""
-    with next(tmp_path.glob("*.csv")).open() as stream:
-        assert len(list(csv.DictReader(stream))) == len(rows)
+    with sqlite3.connect(next(tmp_path.glob("*.db"))) as db:
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0] == len(rows)
+
+
+@pytest.mark.parametrize("completion_at", [2.9, None, 3.2])
+def test_default_completion_timeout_boundary_and_late_result(monkeypatch, completion_at):
+    clock = [100.0]
+    monkeypatch.setattr("integration.engine.time.monotonic", lambda: clock[0])
+    wire = Collector()
+    mcs = McsController(wire)
+    factory = PacketFactory()
+    mcs.receive(encode(factory.make("status", MockBackend().snapshot())))
+    cmd = mcs.transmit(b"timeout-boundary")
+    # Acceptance starts the completion timer, independently of the send time.
+    clock[0] = 101.0
+    mcs.receive(encode(factory.make("command_result", pb.CommandResult(
+        command_id=cmd, state=pb.ACCEPTED))))
+    assert mcs.commands[cmd].deadline == 104.0
+    clock[0] = 103.9
+    mcs.tick()
+    assert mcs.commands[cmd].state == "ACCEPTED"
+    if completion_at == 2.9:
+        mcs.receive(encode(factory.make("command_result", pb.CommandResult(
+            command_id=cmd, state=pb.TX_COMPLETED))))
+    clock[0] = 104.0
+    mcs.tick()
+    assert mcs.commands[cmd].state == (
+        "TX_COMPLETED" if completion_at == 2.9 else "OUTCOME_UNKNOWN")
+    if completion_at == 3.2:
+        clock[0] = 104.2
+        mcs.receive(encode(factory.make("command_result", pb.CommandResult(
+            command_id=cmd, state=pb.TX_COMPLETED))))
+        assert mcs.commands[cmd].state == "TX_COMPLETED"
+    assert len(wire.messages) == 1  # Timeout must never trigger another transmission.
+    mcs.close()
 
 
 @pytest.mark.parametrize("mode, expected", [("success", "TX_COMPLETED"), ("fail", "FAILED"),
