@@ -27,7 +27,7 @@ class EventLog:
         self._config_sequence = 0
         self._config_time = ""
         self._config_summary = ""
-                self._json = self._db = None
+        self._json = self._db = None
 
         if directory is not None:
             directory = Path(directory)
