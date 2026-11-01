@@ -19,10 +19,14 @@ class EventLog:
     """Append each valid event to JSONL and CSV; unknown measurements stay blank."""
     FIELDS = ("local_time_unix_ms", "direction", "kind", "session_id", "sequence",
               "event_time_unix_ms", "command_id", "state", "payload_hex",
-              "rssi_dbm", "snr_db", "error_code", "detail_json")
+              "rssi_dbm", "snr_db", "modem_config_summary", "config_state_time_unix_ms", "config_status_sequence", "error_code", "detail_json")
 
     def __init__(self, directory: str | Path | None = None):
         self.rows = []
+        self._config_session = None
+        self._config_sequence = 0
+        self._config_time = ""
+        self._config_summary = ""
         self._json = self._csv = None
         if directory is not None:
             directory = Path(directory)
@@ -52,6 +56,25 @@ class EventLog:
             for field in ("rssi_dbm", "snr_db"):
                 if hasattr(body, field) and body.HasField(field):
                     row[field] = getattr(body, field)
+                    kind_name = packet.WhichOneof("body")
+
+            if kind_name == "status":
+                if (packet.session_id != self._config_session
+                        or packet.sequence > self._config_sequence):
+                    self._config_session = packet.session_id
+                    self._config_sequence = packet.sequence
+                    self._config_time = packet.timestamp_unix_ms
+                    self._config_summary = next(
+                        (c.configuration_summary for c in body.components
+                         if c.component == pb.RADIO), "")
+
+            if (kind_name == "radio_receive"
+                    and packet.session_id == self._config_session
+                    and packet.sequence > self._config_sequence):
+                row.update(
+                    modem_config_summary=self._config_summary,
+                    config_status_time_unix_ms=self._config_time,
+                    config_status_sequence=self._config_sequence)
         self.rows.append(row)
         del self.rows[:-1000]
         if self._json is not None:
