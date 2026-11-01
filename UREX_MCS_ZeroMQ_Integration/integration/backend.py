@@ -24,6 +24,14 @@ class Reception:
     rssi_dbm: float | None = None
     snr_db: float | None = None
     radio_crc_ok: bool | None = None
+    modem_config: pb.ModemConfiguration | None = None
+
+    def __post_init__(self):
+        # A later change to the backend's active settings must not mutate this RX.
+        if self.modem_config is not None:
+            snapshot = pb.ModemConfiguration()
+            snapshot.CopyFrom(self.modem_config)
+            object.__setattr__(self, "modem_config", snapshot)
 
 
 class HardwareBackend(Protocol):
@@ -70,7 +78,9 @@ class MockBackend:
                                      "" if ok else "TX_FAILED",
                                      "" if ok else "Synthetic TX failure"))
             if ok:
-                self.received.append(Reception(payload, timestamp, -54.0, 11.0, True))
+                self.received.append(Reception(payload, timestamp, -54.0, 11.0, True,
+                    pb.ModemConfiguration(frequency_hz=2400000000, spreading_factor=7,
+                        bandwidth_hz=125000, coding_rate="4/5", modulation="LoRa", radio_id="MOCK")))
         self.pending = pending
         return result
 

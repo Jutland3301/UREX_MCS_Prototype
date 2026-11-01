@@ -6,7 +6,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 from google.protobuf.json_format import MessageToDict
 
@@ -20,6 +20,8 @@ class EventLog:
     FIELDS = ("run_id", "local_time_unix_ms", "direction", "kind", "session_id", "sequence",
               "event_time_unix_ms", "command_id", "state", "payload_hex",
               "rssi_dbm", "snr_db", "modem_config_summary",
+              "modem_config_source", "modem_frequency_hz", "modem_spreading_factor",
+              "modem_bandwidth_hz", "modem_coding_rate", "modem_modulation", "modem_radio_id",
               "config_status_time_unix_ms", "config_status_sequence",
               "error_code", "detail_json")
 
@@ -37,7 +39,8 @@ class EventLog:
             self._json = (directory / f"{basename}.jsonl").open("w", encoding="utf-8")
             self._db = sqlite3.connect(directory / f"{basename}.db")
             integer_fields = {"local_time_unix_ms", "sequence", "event_time_unix_ms",
-                              "config_status_time_unix_ms", "config_status_sequence"}
+                              "config_status_time_unix_ms", "config_status_sequence",
+                              "modem_frequency_hz", "modem_spreading_factor", "modem_bandwidth_hz"}
             columns = ", ".join(
                 f"{name} " + ("INTEGER" if name in integer_fields else
                               "REAL" if name in {"rssi_dbm", "snr_db"} else "TEXT")
@@ -87,6 +90,19 @@ class EventLog:
                 row.update(modem_config_summary=self._config_summary,
                            config_status_time_unix_ms=self._config_time,
                            config_status_sequence=self._config_sequence)
+            if kind_name == "radio_receive":
+                row["modem_config_source"] = (
+                    "last_status_summary" if row["modem_config_summary"] else "unavailable")
+                if body.HasField("modem_config"):
+                    config = body.modem_config
+                    row.update(modem_config_source="rx_event" if config.ListFields() else "rx_event_empty",
+                        modem_config_summary=json.dumps(MessageToDict(
+                            config, preserving_proto_field_name=True), ensure_ascii=False),
+                        config_status_time_unix_ms="", config_status_sequence="")
+                    for field in ("frequency_hz", "spreading_factor", "bandwidth_hz",
+                                  "coding_rate", "modulation", "radio_id"):
+                        if config.HasField(field):
+                            row["modem_" + field] = getattr(config, field)
         self.rows.append(row)
         del self.rows[:-1000]
         if self._db is not None:
@@ -138,7 +154,7 @@ class McsController:
     def fresh(self):
         return self.last_status is not None and time.monotonic() - self.last_status < 3.0
 
-    def transmit(self, payload: bytes) -> str:
+    def transmit(self, payload: bytes, *, command_id: str | None = None) -> str:
         if not self.fresh:
             raise ValueError("No current Pi Status; transmitting is disabled")
         if not payload or len(payload) > self.status.max_tx_payload_bytes:
@@ -152,7 +168,10 @@ class McsController:
                 if old.state not in ("SENT", "ACCEPTED"):
                     del self.commands[old_id]
                     break
-        command_id = str(uuid4())
+        command_id = command_id or str(uuid4())
+        UUID(command_id)
+        if command_id in self.commands:
+            raise ValueError("Command ID already exists; no automatic replay")
         packet = self.factory.make("transmit_request", pb.TransmitRequest(command_id=command_id, payload=payload))
         self.transport.send(encode(packet))
         self.commands[command_id] = TrackedCommand(command_id, bytes(payload), "SENT",
@@ -323,6 +342,8 @@ class PiEngine:
                          timestamp_ms=event.timestamp_ms)
         for event in self.backend.drain_received():
             body = pb.RadioReceive(payload=event.payload)
+            if event.modem_config is not None:
+                body.modem_config.CopyFrom(event.modem_config)
             for field in ("rssi_dbm", "snr_db", "radio_crc_ok"):
                 value = getattr(event, field)
                 if value is not None:

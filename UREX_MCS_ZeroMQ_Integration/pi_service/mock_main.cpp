@@ -31,7 +31,13 @@ public:
             if (mode=="timeout" || std::chrono::steady_clock::now()<it->due) { ++it; continue; }
             auto timestamp=unix_ms(); bool success=mode=="success";
             result.push_back({it->id,success,timestamp,success?"":"TX_FAILED",success?"":"Synthetic failure"});
-            if (success) received.push_back({it->payload,timestamp,-54.0f,11.0f,true});
+            if (success) {
+                pb::ModemConfiguration config;
+                config.set_frequency_hz(2400000000ULL); config.set_spreading_factor(7);
+                config.set_bandwidth_hz(125000); config.set_coding_rate("4/5");
+                config.set_modulation("LoRa"); config.set_radio_id("C++ MOCK");
+                received.push_back({it->payload,timestamp,-54.0f,11.0f,true,config});
+            }
             it=pending.erase(it);
         }
         return result;

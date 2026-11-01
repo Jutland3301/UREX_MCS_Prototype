@@ -2,6 +2,7 @@
 from __future__ import annotations
 import time
 import json
+import threading
 from concurrent.futures import Future
 from PySide6.QtCore import QObject, Signal, Slot
 from gui.integration_window import IntegrationWindow
@@ -37,25 +38,24 @@ class MeasuredWindow(IntegrationWindow):
         self.rx = []
         self.events = []
         super().__init__(endpoint, log_dir)
-        original = self.controller.log.record
-        def record(*args, **kwargs):
-            start = time.perf_counter_ns()
-            row = original(*args, **kwargs)
-            cost = (time.perf_counter_ns()-start)/1e6
-            self.log_costs.append(cost)
-            # Original EventLog row is retained in DB + JSONL; sidecar provides phase association.
-            event = dict(phase=self.phase, kind=row['kind'], direction=row['direction'],
-                         session_id=row['session_id'], sequence=row['sequence'],
-                         command_id=row['command_id'], state=row['state'], payload_hex=row['payload_hex'],
-                         local_unix_ms=row['local_time_unix_ms'], log_cost_ms=cost,
-                         monotonic_ns=time.perf_counter_ns())
-            self.events.append(event)
-            if row['kind'] == 'radio_receive':
-                self.rx.append(event)
-            self.stream.write(json.dumps(event)+'\n')
-            self.stream.flush()
-            return row
-        self.controller.log.record = record
+        self.controller.event_recorded.connect(self.observe_record)
+
+    @Slot(object)
+    def observe_record(self, sample):
+        row = sample['row']
+        cost = sample['log_cost_ms']
+        self.log_costs.append(cost)
+        event = dict(phase=row['run_id'] or 'STARTUP', kind=row['kind'], direction=row['direction'],
+                     session_id=row['session_id'], sequence=row['sequence'],
+                     command_id=row['command_id'], state=row['state'], payload_hex=row['payload_hex'],
+                     local_unix_ms=row['local_time_unix_ms'], log_cost_ms=cost,
+                     monotonic_ns=sample['monotonic_ns'], worker_thread_id=sample['worker_thread_id'])
+        self.events.append(event)
+        if row['kind'] == 'radio_receive':
+            self.rx.append(event)
+        self.stream.write(json.dumps(event)+'\n')
+        self.stream.flush()
+
     def tick(self):
         start = time.perf_counter_ns()
         if self.previous_tick is not None:
@@ -63,6 +63,7 @@ class MeasuredWindow(IntegrationWindow):
             self.tick_gaps.append(max(0, gap-20))
             self.stream.write(json.dumps(dict(
                 metric='gui_timer', phase=self.phase, monotonic_ns=start,
+                gui_thread_id=threading.get_ident(),
                 interval_ms=gap, lateness_ms=max(0,gap-20)))+'\n')
         self.previous_tick = start
         try:
@@ -81,7 +82,7 @@ class MeasuredWindow(IntegrationWindow):
         self.log_costs.clear()
         return len(self.events)
     def phase_stats(self, start):
-        rows = self.events[start:]
+        rows = [r for r in self.events[start:] if r["phase"] == self.phase]
         rx = [r for r in rows if r['kind']=='radio_receive']
         valid = [r for r in rows if r['direction']=='RX']
         keys = [(r['session_id'],r['sequence']) for r in valid]

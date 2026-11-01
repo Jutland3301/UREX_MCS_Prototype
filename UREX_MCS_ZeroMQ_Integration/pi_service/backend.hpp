@@ -18,6 +18,8 @@ struct Reception {
     uint64_t timestamp_ms;
     std::optional<float> rssi_dbm, snr_db;
     std::optional<bool> radio_crc_ok;
+    // Copy the active settings in the native RX callback, not later during drain.
+    std::optional<pb::ModemConfiguration> modem_config = std::nullopt;
 };
 class Backend {
 public:

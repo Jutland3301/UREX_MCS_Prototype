@@ -71,6 +71,16 @@ message RadioReceive {
   optional float rssi_dbm = 2;
   optional float snr_db = 3;
   optional bool radio_crc_ok = 4;
+  ModemConfiguration modem_config = 5; // Snapshot captured when THIS RX event occurred.
+}
+
+message ModemConfiguration {
+  optional uint64 frequency_hz = 1;
+  optional uint32 spreading_factor = 2;
+  optional uint32 bandwidth_hz = 3;
+  optional string coding_rate = 4;
+  optional string modulation = 5;
+  optional string radio_id = 6;
 }
 
 enum Component {
@@ -159,3 +169,11 @@ Body length: 85 bytes. Total frame length: 94 bytes. CRC: `0x87F0`.
 ```text
 55 58 01 00 00 00 55 08 01 12 24 30 30 30 30 30 30 30 30 2D 30 30 30 30 2D 30 30 30 30 2D 30 30 30 30 2D 30 30 30 30 30 30 30 30 30 30 30 31 18 01 20 80 CD FE EC 92 34 6A 22 0A 04 08 01 10 02 0A 04 08 02 10 05 0A 04 08 03 10 05 0A 04 08 04 10 05 0A 04 08 05 10 05 10 3F 18 01 87 F0
 ```
+
+## Per-event modem settings extension (1 November 2026)
+
+`RadioReceive.modem_config` uses additive field 5; schema/envelope version remains 1.
+Older receivers ignore it, and new receivers accept older frames without it.
+See [RX_MODEM_SETTINGS.md](RX_MODEM_SETTINGS.md). Rebuild native C++ services from
+the updated schema before populating this field. Do not use Status summaries as
+proof of the settings at a particular RF reception.

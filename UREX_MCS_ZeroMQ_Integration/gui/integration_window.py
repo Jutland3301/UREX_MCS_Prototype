@@ -1,13 +1,14 @@
 """ZeroMQ monitor uses actual Pi events, without simulator fault controls."""
 from __future__ import annotations
 
+import time
+
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
                                QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
                                QTabWidget, QVBoxLayout, QWidget)
 
-from integration.engine import McsController
-from integration.transport import ZmqTransport
+from integration.worker import ControllerView
 from packet.generated import integration_pb2 as pb
 
 
@@ -32,10 +33,11 @@ class IntegrationWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("UREX MCS — ZeroMQ Integration")
         self.resize(1100, 720)
-        self.transport = ZmqTransport(endpoint)
-        self.controller = McsController(self.transport, log_dir=log_dir)
+        self.controller = ControllerView(endpoint, log_dir, self)
+        self.transport = self.controller.transport
         self._render_key = None
         self._closed = False
+        self._next_render = 0.0
         root = QWidget()
         layout = QVBoxLayout(root)
         layout.addWidget(QLabel(f"MCS listen: {endpoint}    |    Logs: {log_dir}"))
@@ -60,7 +62,7 @@ class IntegrationWindow(QMainWindow):
         layout.addLayout(row)
         tabs = QTabWidget()
         self.command_table = table(["Command ID", "State", "Payload hex", "Error / detail"])
-        self.rx_table = table(["Pi event time (UTC ms)", "MCS receive time (UTC ms)", "Payload hex", "RSSI dBm", "SNR dB"])
+        self.rx_table = table(["Pi event time (UTC ms)", "MCS receive time (UTC ms)", "Payload hex", "RSSI dBm", "SNR dB", "Modem configuration", "Config source"])
         self.event_table = table(["MCS time (UTC ms)", "Direction", "Event", "Detail"])
         for widget, widths in ((self.command_table, (300, 170, 180)),
                                (self.rx_table, (185, 185, 250, 110)),
@@ -72,11 +74,6 @@ class IntegrationWindow(QMainWindow):
         tabs.addTab(self.event_table, "Packet / error log")
         layout.addWidget(tabs, 1)
         self.setCentralWidget(root)
-        try:
-            self.transport.start()
-        except Exception:
-            self.controller.close()
-            raise
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
         self.timer.start(20)
@@ -92,10 +89,18 @@ class IntegrationWindow(QMainWindow):
             QMessageBox.warning(self, "Transmit request not sent", str(exc))
 
     def tick(self):
-        self.controller.tick()
+        try:
+            self.controller.tick()
+        except RuntimeError as exc:
+            self.connection_label.setText(f"MCS worker error: {exc}")
+            self.send_button.setEnabled(False)
+            return
         self.refresh()
 
     def refresh(self):
+        if time.monotonic() < self._next_render:
+            return
+        self._next_render = time.monotonic() + .1
         controller = self.controller
         fresh = controller.fresh
         self.send_button.setEnabled(fresh and controller.status is not None and
@@ -122,7 +127,8 @@ class IntegrationWindow(QMainWindow):
                                       for c in list(controller.commands.values())[-200:]])
         received = [r for r in controller.log.rows if r["kind"] == "radio_receive"][-200:]
         populate(self.rx_table, [(r["event_time_unix_ms"], r["local_time_unix_ms"],
-                                 r["payload_hex"], r["rssi_dbm"], r["snr_db"])
+                                 r["payload_hex"], r["rssi_dbm"], r["snr_db"],
+                                 r["modem_config_summary"], r["modem_config_source"])
                                 for r in received])
         populate(self.event_table, [(r["local_time_unix_ms"], r["direction"], r["kind"],
                                     r["detail_json"]) for r in controller.log.rows[-200:]])

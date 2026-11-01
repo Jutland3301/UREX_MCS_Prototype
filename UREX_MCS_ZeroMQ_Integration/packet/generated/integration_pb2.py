@@ -24,19 +24,19 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11integration.proto\x12\x13urex.integration.v1\"\xdf\x02\n\x11IntegrationPacket\x12\x16\n\x0eschema_version\x18\x01 \x01(\r\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x10\n\x08sequence\x18\x03 \x01(\x04\x12\x19\n\x11timestamp_unix_ms\x18\x04 \x01(\x04\x12@\n\x10transmit_request\x18\n \x01(\x0b\x32$.urex.integration.v1.TransmitRequestH\x00\x12<\n\x0e\x63ommand_result\x18\x0b \x01(\x0b\x32\".urex.integration.v1.CommandResultH\x00\x12:\n\rradio_receive\x18\x0c \x01(\x0b\x32!.urex.integration.v1.RadioReceiveH\x00\x12-\n\x06status\x18\r \x01(\x0b\x32\x1b.urex.integration.v1.StatusH\x00\x42\x06\n\x04\x62ody\"6\n\x0fTransmitRequest\x12\x12\n\ncommand_id\x18\x01 \x01(\t\x12\x0f\n\x07payload\x18\x02 \x01(\x0c\"\x80\x01\n\rCommandResult\x12\x12\n\ncommand_id\x18\x01 \x01(\t\x12\x30\n\x05state\x18\x02 \x01(\x0e\x32!.urex.integration.v1.CommandState\x12\x12\n\nerror_code\x18\x03 \x01(\t\x12\x15\n\rerror_message\x18\x04 \x01(\t\"\x8f\x01\n\x0cRadioReceive\x12\x0f\n\x07payload\x18\x01 \x01(\x0c\x12\x15\n\x08rssi_dbm\x18\x02 \x01(\x02H\x00\x88\x01\x01\x12\x13\n\x06snr_db\x18\x03 \x01(\x02H\x01\x88\x01\x01\x12\x19\n\x0cradio_crc_ok\x18\x04 \x01(\x08H\x02\x88\x01\x01\x42\x0b\n\t_rssi_dbmB\t\n\x07_snr_dbB\x0f\n\r_radio_crc_ok\"\xbb\x01\n\x0f\x43omponentStatus\x12\x31\n\tcomponent\x18\x01 \x01(\x0e\x32\x1e.urex.integration.v1.Component\x12+\n\x06health\x18\x02 \x01(\x0e\x32\x1b.urex.integration.v1.Health\x12\x12\n\nerror_code\x18\x03 \x01(\t\x12\x15\n\rerror_message\x18\x04 \x01(\t\x12\x1d\n\x15\x63onfiguration_summary\x18\x05 \x01(\t\"|\n\x06Status\x12\x38\n\ncomponents\x18\x01 \x03(\x0b\x32$.urex.integration.v1.ComponentStatus\x12\x1c\n\x14max_tx_payload_bytes\x18\x02 \x01(\r\x12\x1a\n\x12\x63lock_synchronized\x18\x03 \x01(\x08*g\n\x0c\x43ommandState\x12\x1d\n\x19\x43OMMAND_STATE_UNSPECIFIED\x10\x00\x12\x0c\n\x08\x41\x43\x43\x45PTED\x10\x01\x12\x10\n\x0cTX_COMPLETED\x10\x02\x12\n\n\x06\x46\x41ILED\x10\x03\x12\x0c\n\x08REJECTED\x10\x04*[\n\tComponent\x12\x19\n\x15\x43OMPONENT_UNSPECIFIED\x10\x00\x12\x06\n\x02PI\x10\x01\x12\t\n\x05RADIO\x10\x02\x12\x07\n\x03SDR\x10\x03\x12\x07\n\x03\x43\x41N\x10\x04\x12\x0e\n\nSPACECRAFT\x10\x05*g\n\x06Health\x12\x16\n\x12HEALTH_UNSPECIFIED\x10\x00\x12\x10\n\x0cINITIALIZING\x10\x01\x12\t\n\x05READY\x10\x02\x12\x0c\n\x08\x44\x45GRADED\x10\x03\x12\t\n\x05\x45RROR\x10\x04\x12\x0f\n\x0bUNAVAILABLE\x10\x05\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11integration.proto\x12\x13urex.integration.v1\"\xdf\x02\n\x11IntegrationPacket\x12\x16\n\x0eschema_version\x18\x01 \x01(\r\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x10\n\x08sequence\x18\x03 \x01(\x04\x12\x19\n\x11timestamp_unix_ms\x18\x04 \x01(\x04\x12@\n\x10transmit_request\x18\n \x01(\x0b\x32$.urex.integration.v1.TransmitRequestH\x00\x12<\n\x0e\x63ommand_result\x18\x0b \x01(\x0b\x32\".urex.integration.v1.CommandResultH\x00\x12:\n\rradio_receive\x18\x0c \x01(\x0b\x32!.urex.integration.v1.RadioReceiveH\x00\x12-\n\x06status\x18\r \x01(\x0b\x32\x1b.urex.integration.v1.StatusH\x00\x42\x06\n\x04\x62ody\"6\n\x0fTransmitRequest\x12\x12\n\ncommand_id\x18\x01 \x01(\t\x12\x0f\n\x07payload\x18\x02 \x01(\x0c\"\x80\x01\n\rCommandResult\x12\x12\n\ncommand_id\x18\x01 \x01(\t\x12\x30\n\x05state\x18\x02 \x01(\x0e\x32!.urex.integration.v1.CommandState\x12\x12\n\nerror_code\x18\x03 \x01(\t\x12\x15\n\rerror_message\x18\x04 \x01(\t\"\xce\x01\n\x0cRadioReceive\x12\x0f\n\x07payload\x18\x01 \x01(\x0c\x12\x15\n\x08rssi_dbm\x18\x02 \x01(\x02H\x00\x88\x01\x01\x12\x13\n\x06snr_db\x18\x03 \x01(\x02H\x01\x88\x01\x01\x12\x19\n\x0cradio_crc_ok\x18\x04 \x01(\x08H\x02\x88\x01\x01\x12=\n\x0cmodem_config\x18\x05 \x01(\x0b\x32\'.urex.integration.v1.ModemConfigurationB\x0b\n\t_rssi_dbmB\t\n\x07_snr_dbB\x0f\n\r_radio_crc_ok\"\x96\x02\n\x12ModemConfiguration\x12\x19\n\x0c\x66requency_hz\x18\x01 \x01(\x04H\x00\x88\x01\x01\x12\x1d\n\x10spreading_factor\x18\x02 \x01(\rH\x01\x88\x01\x01\x12\x19\n\x0c\x62\x61ndwidth_hz\x18\x03 \x01(\rH\x02\x88\x01\x01\x12\x18\n\x0b\x63oding_rate\x18\x04 \x01(\tH\x03\x88\x01\x01\x12\x17\n\nmodulation\x18\x05 \x01(\tH\x04\x88\x01\x01\x12\x15\n\x08radio_id\x18\x06 \x01(\tH\x05\x88\x01\x01\x42\x0f\n\r_frequency_hzB\x13\n\x11_spreading_factorB\x0f\n\r_bandwidth_hzB\x0e\n\x0c_coding_rateB\r\n\x0b_modulationB\x0b\n\t_radio_id\"\xbb\x01\n\x0f\x43omponentStatus\x12\x31\n\tcomponent\x18\x01 \x01(\x0e\x32\x1e.urex.integration.v1.Component\x12+\n\x06health\x18\x02 \x01(\x0e\x32\x1b.urex.integration.v1.Health\x12\x12\n\nerror_code\x18\x03 \x01(\t\x12\x15\n\rerror_message\x18\x04 \x01(\t\x12\x1d\n\x15\x63onfiguration_summary\x18\x05 \x01(\t\"|\n\x06Status\x12\x38\n\ncomponents\x18\x01 \x03(\x0b\x32$.urex.integration.v1.ComponentStatus\x12\x1c\n\x14max_tx_payload_bytes\x18\x02 \x01(\r\x12\x1a\n\x12\x63lock_synchronized\x18\x03 \x01(\x08*g\n\x0c\x43ommandState\x12\x1d\n\x19\x43OMMAND_STATE_UNSPECIFIED\x10\x00\x12\x0c\n\x08\x41\x43\x43\x45PTED\x10\x01\x12\x10\n\x0cTX_COMPLETED\x10\x02\x12\n\n\x06\x46\x41ILED\x10\x03\x12\x0c\n\x08REJECTED\x10\x04*[\n\tComponent\x12\x19\n\x15\x43OMPONENT_UNSPECIFIED\x10\x00\x12\x06\n\x02PI\x10\x01\x12\t\n\x05RADIO\x10\x02\x12\x07\n\x03SDR\x10\x03\x12\x07\n\x03\x43\x41N\x10\x04\x12\x0e\n\nSPACECRAFT\x10\x05*g\n\x06Health\x12\x16\n\x12HEALTH_UNSPECIFIED\x10\x00\x12\x10\n\x0cINITIALIZING\x10\x01\x12\t\n\x05READY\x10\x02\x12\x0c\n\x08\x44\x45GRADED\x10\x03\x12\t\n\x05\x45RROR\x10\x04\x12\x0f\n\x0bUNAVAILABLE\x10\x05\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'integration_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_COMMANDSTATE']._serialized_start=1045
-  _globals['_COMMANDSTATE']._serialized_end=1148
-  _globals['_COMPONENT']._serialized_start=1150
-  _globals['_COMPONENT']._serialized_end=1241
-  _globals['_HEALTH']._serialized_start=1243
-  _globals['_HEALTH']._serialized_end=1346
+  _globals['_COMMANDSTATE']._serialized_start=1389
+  _globals['_COMMANDSTATE']._serialized_end=1492
+  _globals['_COMPONENT']._serialized_start=1494
+  _globals['_COMPONENT']._serialized_end=1585
+  _globals['_HEALTH']._serialized_start=1587
+  _globals['_HEALTH']._serialized_end=1690
   _globals['_INTEGRATIONPACKET']._serialized_start=43
   _globals['_INTEGRATIONPACKET']._serialized_end=394
   _globals['_TRANSMITREQUEST']._serialized_start=396
@@ -44,9 +44,11 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_COMMANDRESULT']._serialized_start=453
   _globals['_COMMANDRESULT']._serialized_end=581
   _globals['_RADIORECEIVE']._serialized_start=584
-  _globals['_RADIORECEIVE']._serialized_end=727
-  _globals['_COMPONENTSTATUS']._serialized_start=730
-  _globals['_COMPONENTSTATUS']._serialized_end=917
-  _globals['_STATUS']._serialized_start=919
-  _globals['_STATUS']._serialized_end=1043
+  _globals['_RADIORECEIVE']._serialized_end=790
+  _globals['_MODEMCONFIGURATION']._serialized_start=793
+  _globals['_MODEMCONFIGURATION']._serialized_end=1071
+  _globals['_COMPONENTSTATUS']._serialized_start=1074
+  _globals['_COMPONENTSTATUS']._serialized_end=1261
+  _globals['_STATUS']._serialized_start=1263
+  _globals['_STATUS']._serialized_end=1387
 # @@protoc_insertion_point(module_scope)

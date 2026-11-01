@@ -38,6 +38,16 @@ message RadioReceive {
   optional float rssi_dbm = 2;
   optional float snr_db = 3;
   optional bool radio_crc_ok = 4;
+  ModemConfiguration modem_config = 5; // Snapshot captured when THIS RX event occurred.
+}
+
+message ModemConfiguration {
+  optional uint64 frequency_hz = 1;
+  optional uint32 spreading_factor = 2;
+  optional uint32 bandwidth_hz = 3;
+  optional string coding_rate = 4;
+  optional string modulation = 5;
+  optional string radio_id = 6;
 }
 
 enum Component {

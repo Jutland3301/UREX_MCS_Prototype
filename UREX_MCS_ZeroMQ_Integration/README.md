@@ -74,3 +74,6 @@ C++ and nanopb bindings can also be generated when the corresponding Protocol Bu
 
 See [EVIDENCE_RUNBOOK.md](docs/EVIDENCE_RUNBOOK.md). Run the PC and Pi entry points
 from **this directory**, not the legacy simulator at repository root.
+
+The network GUI now owns communication/SQLite in a background QThread. Per-RX
+modem snapshots are supported; see [RX_MODEM_SETTINGS.md](docs/RX_MODEM_SETTINGS.md).

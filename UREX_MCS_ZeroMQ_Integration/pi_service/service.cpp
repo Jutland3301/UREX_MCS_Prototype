@@ -192,6 +192,15 @@ struct Service::Impl {
             if (e.rssi_dbm) rx->set_rssi_dbm(*e.rssi_dbm);
             if (e.snr_db) rx->set_snr_db(*e.snr_db);
             if (e.radio_crc_ok) rx->set_radio_crc_ok(*e.radio_crc_ok);
+            if (e.modem_config) {
+                const auto &config = *e.modem_config;
+                if ((config.has_frequency_hz() && (!config.frequency_hz() || config.frequency_hz()>9223372036854775807ULL)) ||
+                    (config.has_spreading_factor() && !config.spreading_factor()) ||
+                    (config.has_bandwidth_hz() && !config.bandwidth_hz())) {
+                    std::cerr << "NATIVE_RX_REJECTED: invalid modem settings\n"; continue;
+                }
+                rx->mutable_modem_config()->CopyFrom(config);
+            }
             try { send(p); } catch(const std::exception &error) { std::cerr << "NATIVE_RX_REJECTED: " << error.what() << '\n'; }
         }
         for (auto it=cache.begin(); it!=cache.end();) {

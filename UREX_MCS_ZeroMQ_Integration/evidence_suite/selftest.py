@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import sqlite3
 from pathlib import Path
 
 
@@ -47,6 +48,10 @@ def main():
         assert {r.get('protocol') for r in summary['tests'] if r['test'].startswith('H2')}=={'zeromq','mqtt_qos0','mqtt_qos1'}
         assert summary['packet_reconciliation']['status']=='COMPLETE'
         assert all(r['status']=='COMPLETE' for r in summary['tests'])
+        assert summary['thread_layout']['gui_thread_id'] != summary['thread_layout']['io_worker_thread_id']
+        with sqlite3.connect(next((summaries[-1].parent/'mcs').glob('*.db'))) as db:
+            rows=db.execute("SELECT modem_config_source,modem_frequency_hz,modem_spreading_factor FROM events WHERE kind='radio_receive'").fetchall()
+            assert rows and all(row==('rx_event',2400000000,7) for row in rows)
         print('SELFTEST PASS — MOCK ONLY; all six collections, reconciliation and ZIP recovery checked')
     finally:
         agent.terminate()

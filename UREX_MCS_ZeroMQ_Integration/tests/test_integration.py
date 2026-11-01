@@ -253,13 +253,13 @@ def test_network_gui_with_mock(tmp_path):
     pi_wire.start()
     try:
         deadline = time.monotonic() + 4
-        while not window.controller.fresh and time.monotonic() < deadline:
+        while not window.send_button.isEnabled() and time.monotonic() < deadline:
             pi.tick(); window.tick(); app.processEvents(); time.sleep(0.01)
         assert window.send_button.isEnabled()
         window.payload.setText("00 0A FF")
         window.send_payload()
         deadline = time.monotonic() + 4
-        while not window.controller.receptions and time.monotonic() < deadline:
+        while window.rx_table.rowCount() == 0 and time.monotonic() < deadline:
             pi.tick(); window.tick(); app.processEvents(); time.sleep(0.01)
         assert window.status_table.rowCount() == 5
         assert window.command_table.item(0, 1).text() == "TX_COMPLETED"

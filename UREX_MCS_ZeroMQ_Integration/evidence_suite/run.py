@@ -63,8 +63,8 @@ def main():
     sanitized = {k:v for k,v in plan.items() if k!='token'}
     dump(root/'plan.json', sanitized)
     dump(root/'manifest.json', dict(run_id=run_id, environment=environment(),
-        offscreen=args.offscreen, architecture='Existing GUI thread polls ZeroMQ and writes SQLite synchronously; '
-        'runner orchestration is a separate thread. No claim of worker-isolated MCS I/O.',
+        offscreen=args.offscreen, architecture='QThread owns ZeroMQ, controller and SQLite. GUI consumes detached snapshots. '
+        'Runner orchestration uses a separate Python thread.',
         hypothesis_note='COMPLETE means collection completed, not that a research hypothesis is proven.'))
     app = QApplication([])
     bridge = Bridge()
@@ -87,7 +87,13 @@ def main():
         return False
     def phase(name):
         remote.call('phase', {'phase':name})
-        return call(lambda:window.begin_phase(name))
+        index=call(lambda:window.begin_phase(name))
+        flush_worker()
+        return index
+    def flush_worker():
+        marker=call(window.controller.flush)
+        if not wait(lambda:window.controller.last_flush>=marker,plan.get('timeout_s',8)):
+            raise RuntimeError('MCS worker flush acknowledgement timed out')
     def command(step):
         payload = bytes.fromhex(step['payload_hex'])
         return call(lambda:window.controller.transmit(payload))
@@ -130,8 +136,9 @@ def main():
                                 errors.append(str(exc))
                             next_send=max(next_send+1/rate,now)
                         time.sleep(.005)
-                    wait(lambda:all(window.controller.commands[c].state not in ('SENT','ACCEPTED')
+                    wait(lambda:all(window.controller.commands[c].state not in ('QUEUED','SENT','ACCEPTED')
                                     for c in commands),timeout)
+                    flush_worker()
                     summary=call(lambda:window.phase_stats(index))
                     states=call(lambda:{c:window.controller.commands[c].state for c in commands})
                     summary.update(test=name,status='COMPLETE' if summary['radio_receive'] else 'INCOMPLETE',
@@ -154,7 +161,7 @@ def main():
                             record['command_id']=cmd
                             expected=step.get('expected_rx_hex')
                             expected=bytes.fromhex(expected).hex() if expected is not None else None
-                            settled=wait(lambda:window.controller.commands[cmd].state not in ('SENT','ACCEPTED'),timeout)
+                            settled=wait(lambda:window.controller.commands[cmd].state not in ('QUEUED','SENT','ACCEPTED'),timeout)
                             record['state']=call(lambda:window.controller.commands[cmd].state)
                             if expected is None:
                                 record.update(status='INCOMPLETE',reason='No expected response rule configured')
@@ -204,6 +211,9 @@ def main():
                     result['pi_logs_recovered']=False
                     result['errors'].append('Pi log recovery: '+str(exc))
             try:
+                result['thread_layout']=call(lambda:dict(
+                    gui_thread_id=threading.get_ident(),
+                    io_worker_thread_id=window.controller.worker_thread_id))
                 probe_error=call(lambda:getattr(window,'probe_error',None))
                 if probe_error:
                     result['errors'].append('GUI/recording error: '+probe_error)

@@ -51,6 +51,10 @@ def validate(packet: pb.IntegrationPacket) -> str:
                 raise ValueError("non-finite radio measurement")
         if body.HasField("radio_crc_ok") and not body.radio_crc_ok:
             raise ValueError("CRC-failed native reception is not successful RX")
+        if body.HasField("modem_config"):
+            for field in ("frequency_hz", "spreading_factor", "bandwidth_hz"):
+                if body.modem_config.HasField(field) and not 0 < getattr(body.modem_config, field) <= 2**63-1:
+                    raise ValueError("reported modem configuration must use positive numeric values")
     elif kind == "status":
         if not 1 <= body.max_tx_payload_bytes <= MAX_BODY:
             raise ValueError("invalid hardware TX limit")

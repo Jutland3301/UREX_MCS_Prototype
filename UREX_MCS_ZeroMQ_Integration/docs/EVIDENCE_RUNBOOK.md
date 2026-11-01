@@ -125,10 +125,18 @@ reconciliation compares radio-receive session/sequence keys with persisted MCS D
 rows, reporting missing, extra and duplicate rows. A proxy forward is a ZeroMQ
 queue-acceptance observation, not proof of RF transmission or reception upstream.
 
-The GUI still polls communication and writes SQLite synchronously on its main
-thread. This suite measures that architecture; it does not implement or prove
-worker-isolated/multithreaded MCS I/O. Timer lateness is an event-loop responsiveness
-proxy, not a human click-to-pixel measurement. Offscreen runs are explicitly marked.
+The MCS now creates/owns its ZeroMQ socket, controller and SQLite connection in a
+QThread. The GUI submits nonblocking command requests and consumes detached,
+batched snapshots; it never accesses that socket or DB connection. GUI table
+rendering is capped at 10 Hz while the 20-ms GUI timer measures event-loop lateness.
+Commands first appear as QUEUED, then SENT/ACCEPTED/terminal. A worker flush
+acknowledgement ensures phase summaries include the committed event batch.
+Shutdown drains queued requests, closes SQLite on its owner thread and delivers
+final committed records before the evidence sidecar closes. The orchestration
+thread remains separate. This supplies architecture evidence; actual hardware
+traffic is still required to test performance and completeness under load.
+Timer lateness is an event-loop responsiveness proxy, not a human click-to-pixel
+measurement. Offscreen runs are explicitly marked.
 
 ### H2: matched PC↔Pi middleware echo, no radio
 
@@ -177,9 +185,16 @@ baseline is not fabricated.
 
 SQLite replaces automatic CSV packet logging; JSONL remains an independent readable
 copy. DB rows use NULL for unavailable values, preserving actual numeric zero.
-Modem configuration is the last reported RADIO configuration summary plus its
-Status timestamp/sequence. It is not assumed to be the exact configuration at RF
-reception. No old CSV files are migrated automatically.
+Per-event modem settings are carried in the additive `RadioReceive.modem_config`
+field and stored in typed SQLite columns (frequency in Hz, SF, bandwidth in Hz,
+coding rate, modulation and radio ID). `modem_config_source=rx_event` means the
+Pi supplied settings in that specific RX event; omitted fields remain NULL.
+An explicitly empty config is labelled `rx_event_empty`. Older peers without the
+new field remain compatible: their rows use `last_status_summary` or `unavailable`,
+never guessed per-event values. The hardware adapter must snapshot its active
+settings when RX occurs, rather than querying them later during queue drain.
+See [RX_MODEM_SETTINGS.md](RX_MODEM_SETTINGS.md) for Python and C++ adapter examples.
+No old CSV files are migrated automatically.
 
 ## Local software validation only
 
