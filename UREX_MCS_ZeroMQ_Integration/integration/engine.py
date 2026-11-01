@@ -79,7 +79,7 @@ class TrackedCommand:
 
 
 class McsController:
-    def __init__(self, transport, *, log_dir=None, acceptance_timeout=2.0, completion_timeout=10.0):
+    def __init__(self, transport, *, log_dir=None, acceptance_timeout=2.0, completion_timeout=3.0):
         self.transport = transport
         self.factory = PacketFactory()
         self.log = EventLog(log_dir)
