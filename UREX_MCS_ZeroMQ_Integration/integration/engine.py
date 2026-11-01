@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import csv
+import sqlite3
 import json
 import time
 from collections import OrderedDict
@@ -27,15 +27,41 @@ class EventLog:
         self._config_sequence = 0
         self._config_time = ""
         self._config_summary = ""
-        self._json = self._csv = None
+                self._json = self._db = None
+
         if directory is not None:
             directory = Path(directory)
             directory.mkdir(parents=True, exist_ok=True)
             basename = f"integration-{time.time_ns()}"
-            self._json = (directory / f"{basename}.jsonl").open("w", encoding="utf-8")
-            self._csv = (directory / f"{basename}.csv").open("w", newline="", encoding="utf-8")
-            self._writer = csv.DictWriter(self._csv, fieldnames=self.FIELDS)
-            self._writer.writeheader()
+
+            self._json = (directory / f"{basename}.jsonl").open(
+                "w", encoding="utf-8")
+            self._db = sqlite3.connect(directory / f"{basename}.db")
+
+            integer_fields = {
+                "local_time_unix_ms", "sequence", "event_time_unix_ms",
+                "config_status_time_unix_ms", "config_status_sequence"
+            }
+            columns = ", ".join(
+                f"{name} " + (
+                    "INTEGER" if name in integer_fields else
+                    "REAL" if name in {"rssi_dbm", "snr_db"} else "TEXT"
+                )
+                for name in self.FIELDS
+            )
+
+            with self._db:
+                self._db.execute(
+                    f"CREATE TABLE events (id INTEGER PRIMARY KEY, {columns})")
+                for name in ("local_time_unix_ms", "command_id", "kind"):
+                    self._db.execute(
+                        f"CREATE INDEX idx_events_{name} ON events ({name})")
+
+            placeholders = ", ".join("?" for _ in self.FIELDS)
+            self._insert_sql = (
+                f"INSERT INTO events ({', '.join(self.FIELDS)}) "
+                f"VALUES ({placeholders})"
+            )
 
     def record(self, kind: str, *, direction: str = "LOCAL", packet=None, detail=""):
         row = dict.fromkeys(self.FIELDS, "")
@@ -77,11 +103,19 @@ class EventLog:
                     config_status_sequence=self._config_sequence)
         self.rows.append(row)
         del self.rows[:-1000]
+
+        if self._db is not None:
+            values = [
+                None if row[name] == "" else row[name]
+                for name in self.FIELDS
+            ]
+            with self._db:
+                self._db.execute(self._insert_sql, values)
+
         if self._json is not None:
             self._json.write(json.dumps(row, ensure_ascii=False) + "\n")
             self._json.flush()
-            self._writer.writerow(row)
-            self._csv.flush()
+
         return row
 
     def close(self):
@@ -320,5 +354,10 @@ class PiEngine:
                 del self.cache[command_id]
 
     def close(self):
-        self.transport.stop()
-        self.log.close()
+        if self._json is not None:
+            self._json.close()
+            self._json = None
+
+        if self._db is not None:
+            self._db.close()
+            self._db = None
